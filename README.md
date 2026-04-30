@@ -45,6 +45,9 @@ Or from source:
 ```bash
 git clone <this-repo>
 cd pytest-gpu-proof
+python3 -m pip install -e ".[dev]"
+
+# Older helper script:
 bash install.sh          # installs in editable mode
 bash install.sh dev      # also installs dev dependencies
 ```
@@ -253,7 +256,11 @@ See [docs/security_model.md](docs/security_model.md) for a full discussion.
 | Example | Location | What it shows |
 |---|---|---|
 | Minimal (no GPU needed) | `examples/minimal_python_only/` | Full plugin flow with pure-Python "fake GPU" |
-| Wrapped CUDA via ctypes | `examples/wrapped_cuda_ctypes/` | Realistic CUDA wrapper pattern |
+| Wrapped CUDA via ctypes (fake library) | `examples/wrapped_cuda_ctypes/` | ctypes-style wrapper pattern that runs without CUDA |
+| Real CUDA via ctypes | `examples/cuda_ctypes_matmul/` | C ABI CUDA shared library loaded with Python `ctypes` |
+| Real CUDA via pybind11 | `examples/cuda_pybind11_matmul/` | CUDA-backed Python extension using `pybind11_add_module` |
+| Real CUDA via nanobind | `examples/cuda_nanobind_matmul/` | CUDA-backed Python extension using `nanobind_add_module` |
+| Real CUDA via JAX FFI | `examples/jax_ffi_cuda_matmul/` | Typed CUDA custom call registered with `jax.ffi` |
 | Local sign, CI verify | `examples/local_receipt_verify/` | GitHub Actions workflow for CPU-only verification |
 | CI-GPU execution | `examples/github_gpu_runner/` | GitHub Actions workflow on a GPU runner |
 
@@ -262,8 +269,15 @@ See [docs/security_model.md](docs/security_model.md) for a full discussion.
 ## Development
 
 ```bash
-bash install.sh dev
+python3 -m pip install -e ".[dev]"
 pytest tests/ -v
+```
+
+If you do not want to install the package, run tests directly from the source
+tree with:
+
+```bash
+PYTHONPATH=src pytest -q
 ```
 
 Tests are CPU-only. No GPU or network access required.

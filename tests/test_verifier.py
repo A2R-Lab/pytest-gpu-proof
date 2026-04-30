@@ -54,7 +54,7 @@ def good_receipt(tmp_path, tmp_git_repo, signer_with_key):
         }
     ]
     import datetime
-    now = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     payload = build_receipt_payload(config, results, now, now)
     receipt = finalize_receipt(payload, signer)
     path = tmp_path / "gpu-proof.json"
@@ -129,7 +129,7 @@ def test_verify_fails_on_failed_test(tmp_path, tmp_git_repo, signer_with_key):
         }
     ]
     import datetime
-    now = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     payload = build_receipt_payload(config, results, now, now)
     receipt = finalize_receipt(payload, signer)
     path = tmp_path / "gpu-proof.json"

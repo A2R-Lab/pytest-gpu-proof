@@ -23,7 +23,7 @@ from .gitutils import (
 
 
 def _utcnow() -> str:
-    return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _gpu_info() -> Optional[Dict[str, Any]]:

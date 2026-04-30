@@ -165,8 +165,10 @@ def _verify(
     signed_at_str = receipt.get("session", {}).get("ended_at")
     if signed_at_str:
         try:
-            signed_at = datetime.datetime.strptime(signed_at_str, "%Y-%m-%dT%H:%M:%SZ")
-            age = (datetime.datetime.utcnow() - signed_at).days
+            signed_at = datetime.datetime.strptime(
+                signed_at_str, "%Y-%m-%dT%H:%M:%SZ"
+            ).replace(tzinfo=datetime.UTC)
+            age = (datetime.datetime.now(datetime.UTC) - signed_at).days
             if age > max_days:
                 raise VerificationError(
                     f"Receipt is {age} days old; policy allows max {max_days} days"

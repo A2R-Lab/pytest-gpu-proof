@@ -270,6 +270,7 @@ CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 Makefile
+!examples/cuda_ctypes_matmul/Makefile
 install_manifest.txt
 compile_commands.json
 
@@ -296,3 +297,6 @@ Testing/
 *.ptx
 *.cubin
 *.fatbin
+
+# Specifics
+gpu-proof.json
