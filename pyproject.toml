@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pytest-gpu-proof"
+version = "0.1.0"
+description = "pytest plugin for GPU equivalence testing with signed receipts verified via GitHub SSH keys"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+keywords = ["pytest", "gpu", "cuda", "testing", "signing", "attestation"]
+classifiers = [
+    "Framework :: Pytest",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = [
+    "pytest>=7.0",
+    "cryptography>=41.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest-cov",
+    "numpy",
+]
+sigstore = [
+    "sigstore",
+]
+
+[project.entry-points."pytest11"]
+gpu-proof = "pytest_gpu_proof.plugin"
+
+[project.scripts]
+gpu-proof = "pytest_gpu_proof.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pytest_gpu_proof"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.gpu_proof]
+# Default plugin configuration — can override here or in pytest.ini
+# mode = "local"
+# fingerprint_paths = ["src", "tests"]
+# output = "gpu-proof.json"
+# max_age_days = 30

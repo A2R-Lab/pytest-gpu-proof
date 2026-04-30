@@ -1,0 +1,278 @@
+# pytest-gpu-proof
+
+A pytest plugin that lets you run GPU equivalence tests locally, sign the results with your existing SSH key, and have GitHub Actions verify the receipt — **without re-running the GPU tests in CI**.
+
+The trust model is simple: if you can push to GitHub, you can sign a receipt. Verification fetches your public keys from `github.com/{username}.keys`, exactly as SSH does.
+
+---
+
+## Why this exists
+
+GPU CI is expensive. For many teams, the typical workflow is:
+
+1. Run GPU correctness tests locally (or on a lab machine).
+2. Push code and let CI run only CPU tests.
+3. Hope the GPU tests still pass.
+
+This plugin closes that gap by producing a **cryptographically signed receipt** that proves a specific person ran specific tests against specific code at a specific time — verifiable in ordinary CPU-only CI with no GPU and no secrets.
+
+---
+
+## How it works
+
+```
+Local machine (GPU)               GitHub Actions (CPU only)
+─────────────────────────────     ──────────────────────────────────────
+pytest --gpu-proof-enable  →  →   gpu-proof verify --receipt gpu-proof.json
+  runs your GPU tests              fetches your public keys from
+  computes code fingerprint          github.com/{you}.keys
+  signs receipt with SSH key       verifies signature + fingerprint
+  writes gpu-proof.json            exits 0 (pass) or 1 (fail)
+```
+
+**Zero new key management.** The plugin uses the SSH key you already have in `~/.ssh/` (the same one you use to push to GitHub). Your public key is already on GitHub. The verifier reads it from there.
+
+---
+
+## Installation
+
+```bash
+pip install pytest-gpu-proof
+```
+
+Or from source:
+
+```bash
+git clone <this-repo>
+cd pytest-gpu-proof
+bash install.sh          # installs in editable mode
+bash install.sh dev      # also installs dev dependencies
+```
+
+---
+
+## Quick start
+
+### 1. Write a test
+
+```python
+import pytest
+
+@pytest.mark.gpu_proof
+def test_my_kernel(gpu_proof_check):
+    gpu_proof_check(
+        name="relu",
+        reference=python_relu,     # your reference implementation
+        candidate=cuda_relu,       # your GPU wrapper
+        args=([1.0, -2.0, 3.0],),
+        metadata={"kernel": "relu"},
+    )
+```
+
+### 2. Run locally with signing
+
+```bash
+pytest tests/ --gpu-proof-enable -v
+# → runs tests, signs with ~/.ssh/id_ed25519, writes gpu-proof.json
+```
+
+### 3. Commit the receipt
+
+```bash
+git add gpu-proof.json
+git commit -m "update GPU proof receipt"
+git push
+```
+
+### 4. Verify in GitHub Actions
+
+```yaml
+- name: Verify GPU proof
+  run: gpu-proof verify --receipt gpu-proof.json
+```
+
+That's it. The verifier fetches your public keys from GitHub automatically.
+
+---
+
+## The `gpu_proof_check` fixture
+
+```python
+gpu_proof_check(
+    name="my_op",              # unique name within the test
+    reference=python_fn,       # callable: the ground truth
+    candidate=cuda_fn,         # callable: the GPU implementation
+    args=(arg1, arg2),         # positional arguments (tuple)
+    kwargs={"key": "val"},     # keyword arguments (dict, optional)
+    compare=my_compare_fn,     # optional: (ref_out, cand_out) -> None, raises on mismatch
+    metadata={"info": "..."},  # optional: included verbatim in the receipt
+)
+```
+
+**Default comparison:** `numpy.allclose` for float arrays/tensors, `==` otherwise.
+
+**Custom comparison:** any callable that raises `AssertionError` on mismatch and returns `None` on success.
+
+---
+
+## Markers
+
+| Marker | Effect |
+|---|---|
+| `@pytest.mark.gpu_proof` | Include test outcomes in the receipt |
+| `@pytest.mark.gpu_equivalence` | Alias for `gpu_proof` |
+| `@pytest.mark.gpu_required` | Skip test if no GPU is detected (via `nvidia-smi` or `torch.cuda`) |
+
+---
+
+## CLI options
+
+| Option | Default | Description |
+|---|---|---|
+| `--gpu-proof-enable` | off | Enable receipt generation |
+| `--gpu-proof-mode` | `local` | `local` or `ci-gpu` |
+| `--gpu-proof-out` | `gpu-proof.json` | Receipt output path |
+| `--gpu-proof-key` | auto | SSH private key path |
+| `--gpu-proof-signing-backend` | `ed25519` | `ed25519` or `none` |
+| `--gpu-proof-fingerprint-paths` | `src,tests` | Comma-separated paths to fingerprint |
+| `--gpu-proof-github-user` | auto | GitHub username (auto-detected from git remote) |
+| `--gpu-proof-policy` | — | Path to policy YAML |
+| `--gpu-proof-fail-on-skip` | off | Fail if any `gpu_required` test is skipped |
+
+---
+
+## Verification CLI
+
+```bash
+gpu-proof verify \
+  --receipt gpu-proof.json \
+  --repo . \
+  --max-age-days 30
+
+# With an explicit GitHub username (non-GitHub remotes):
+gpu-proof verify --receipt gpu-proof.json --github-user myusername
+```
+
+Also callable as:
+
+```bash
+python -m pytest_gpu_proof verify --receipt gpu-proof.json
+```
+
+### What the verifier checks
+
+1. **Signature** — fetches `github.com/{signer}.keys`, verifies Ed25519/ECDSA/RSA signature
+2. **Fingerprint** — recomputes SHA-256 digest of `src/` and `tests/`, compares to receipt
+3. **Commit SHA** — compares receipt commit SHA to current HEAD
+4. **Test outcomes** — all tests recorded in the receipt must have passed
+5. **Freshness** — receipt must be younger than `max_age_days` (default: 30)
+6. **Dirty policy** — configurable via policy file
+
+---
+
+## Key management
+
+**Local mode:** Uses your existing `~/.ssh/id_ed25519` (or whatever `git config user.signingKey` points to). No new keys to generate.
+
+**CI-GPU mode:** Generate a dedicated CI signing key, store the private key as a GitHub Actions secret, and add the public key to your GitHub account.
+
+```bash
+ssh-keygen -t ed25519 -f ci-signing-key -N ""
+# Add ci-signing-key.pub to github.com/settings/keys
+# Add contents of ci-signing-key to GitHub Actions secrets as GPU_PROOF_SIGNING_KEY
+```
+
+---
+
+## Receipt format
+
+```json
+{
+  "schema_version": "1",
+  "mode": "local",
+  "repo": {
+    "remote_url": "git@github.com:you/myrepo.git",
+    "github_username": "you",
+    "commit_sha": "abc123...",
+    "branch": "main",
+    "dirty": false
+  },
+  "fingerprint": {
+    "algorithm": "sha256",
+    "included_paths": ["src", "tests"],
+    "file_count": 12,
+    "digest": "deadbeef..."
+  },
+  "session": {
+    "started_at": "2024-01-01T10:00:00Z",
+    "ended_at": "2024-01-01T10:01:30Z",
+    "node_ids": ["tests/test_relu.py::test_relu"]
+  },
+  "tests": [
+    {
+      "node_id": "tests/test_relu.py::test_relu",
+      "outcome": "passed",
+      "duration_s": 1.23,
+      "checks": [{"name": "relu", "outcome": "passed", "metadata": {}}]
+    }
+  ],
+  "environment": {
+    "python_version": "3.11.0",
+    "platform": "linux",
+    "pytest_version": "7.4.0",
+    "gpu_info": {"name": "NVIDIA RTX 3090", "driver_version": "535.104"}
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "backend": "ssh-local",
+    "signer": "you",
+    "key_fingerprint": "SHA256:...",
+    "value": "<base64-encoded signature>"
+  }
+}
+```
+
+---
+
+## Security model
+
+A signed receipt proves that **an accepted signer attested to a specific test run over a specific code state**. It does not prove:
+
+- The local machine was fully trustworthy or uncompromised.
+- The GPU execution environment was hardware-attested.
+- The signing key was protected with a hardware security module.
+
+This is appropriate for **team workflows where the signer is a trusted team member** and the goal is to avoid paying for GPU CI on every merge, not to provide adversarial security guarantees.
+
+See [docs/security_model.md](docs/security_model.md) for a full discussion.
+
+---
+
+## Examples
+
+| Example | Location | What it shows |
+|---|---|---|
+| Minimal (no GPU needed) | `examples/minimal_python_only/` | Full plugin flow with pure-Python "fake GPU" |
+| Wrapped CUDA via ctypes | `examples/wrapped_cuda_ctypes/` | Realistic CUDA wrapper pattern |
+| Local sign, CI verify | `examples/local_receipt_verify/` | GitHub Actions workflow for CPU-only verification |
+| CI-GPU execution | `examples/github_gpu_runner/` | GitHub Actions workflow on a GPU runner |
+
+---
+
+## Development
+
+```bash
+bash install.sh dev
+pytest tests/ -v
+```
+
+Tests are CPU-only. No GPU or network access required.
+
+---
+
+## Compatibility
+
+- Python 3.8+
+- pytest 7.0+
+- `cryptography` 41.0+
+- `pytest-xdist` is **not** supported in v1 (parallel workers would write conflicting receipts)

@@ -1,0 +1,60 @@
+name: GPU Tests (CI-GPU mode)
+
+on:
+  # Run weekly or manually — GPU runners cost money, so don't gate every PR.
+  schedule:
+    - cron: "0 3 * * 1"   # Monday 03:00 UTC
+  workflow_dispatch:
+
+jobs:
+  gpu-test:
+    # Requires a GitHub plan that includes GPU larger runners.
+    # See: https://docs.github.com/en/actions/concepts/runners/github-hosted-runners
+    runs-on: ubuntu-latest-gpu-4   # adjust to your plan's GPU runner label
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install pytest-gpu-proof
+          # Install your project's GPU dependencies here, e.g.:
+          # pip install torch --index-url https://download.pytorch.org/whl/cu121
+
+      - name: Run GPU tests and emit receipt
+        env:
+          # The SSH private key used for signing.
+          # Store it as a GitHub Actions secret (Settings → Secrets → Actions).
+          # Generate with: ssh-keygen -t ed25519 -f ci-signing-key -N ""
+          # Add ci-signing-key.pub to GitHub (Settings → SSH keys) so verification works.
+          GPU_PROOF_KEY_DATA: ${{ secrets.GPU_PROOF_SIGNING_KEY }}
+        run: |
+          # Write the key to disk for the duration of this step
+          echo "$GPU_PROOF_KEY_DATA" > /tmp/ci-signing-key
+          chmod 600 /tmp/ci-signing-key
+
+          pytest tests/ \
+            --gpu-proof-enable \
+            --gpu-proof-mode=ci-gpu \
+            --gpu-proof-key=/tmp/ci-signing-key \
+            --gpu-proof-out=gpu-proof.json \
+            -v
+
+          rm -f /tmp/ci-signing-key
+
+      - name: Upload receipt as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpu-proof-receipt
+          path: gpu-proof.json
+          retention-days: 90
+
+      - name: Verify receipt (self-check)
+        run: |
+          gpu-proof verify \
+            --receipt gpu-proof.json \
+            --repo .

@@ -1,0 +1,30 @@
+name: Verify GPU Proof Receipt
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pytest-gpu-proof
+        run: pip install pytest-gpu-proof
+
+      - name: Verify receipt
+        # The receipt (gpu-proof.json) is committed to the repo.
+        # The verifier fetches the signer's public keys from github.com/{username}.keys
+        # — no secrets needed, no GPU needed.
+        run: |
+          gpu-proof verify \
+            --receipt gpu-proof.json \
+            --repo . \
+            --max-age-days 30
