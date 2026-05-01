@@ -13,6 +13,7 @@ Checks:
 import base64
 import datetime
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -42,6 +43,32 @@ def _receipt_payload_without_sig(receipt: dict) -> bytes:
     from .receipt import canonicalize
     payload = {k: v for k, v in receipt.items() if k != "signature"}
     return canonicalize(payload)
+
+
+def _git(repo_root: str, *args: str) -> Optional[str]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_root, *args],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip() or None
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
+def _is_ancestor(repo_root: str, ancestor_sha: str, descendant_sha: str) -> bool:
+    try:
+        subprocess.run(
+            ["git", "-C", repo_root, "merge-base", "--is-ancestor", ancestor_sha, descendant_sha],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
 
 
 def verify_receipt(
@@ -129,15 +156,22 @@ def _verify(
     print(f"[gpu-proof] Fingerprint OK ({current_fp['digest'][:12]}…)")
 
     # --- commit SHA check ---
-    from .gitutils import get_commit_sha
-
-    current_sha = get_commit_sha()
+    current_sha = _git(repo_root, "rev-parse", "HEAD")
     stored_sha = repo.get("commit_sha")
-    if current_sha and stored_sha and current_sha != stored_sha:
+    if (
+        current_sha
+        and stored_sha
+        and current_sha != stored_sha
+        and not _is_ancestor(repo_root, stored_sha, current_sha)
+    ):
         raise VerificationError(
             f"Commit SHA mismatch: receipt={stored_sha[:12]}  current={current_sha[:12]}"
         )
-    if stored_sha:
+    if current_sha and stored_sha and current_sha != stored_sha:
+        print(
+            f"[gpu-proof] Commit SHA OK ({stored_sha[:12]}… ancestor of {current_sha[:12]}…)"
+        )
+    elif stored_sha:
         print(f"[gpu-proof] Commit SHA OK ({stored_sha[:12]}…)")
 
     # --- dirty repo policy ---

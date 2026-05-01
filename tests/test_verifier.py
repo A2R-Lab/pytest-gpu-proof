@@ -79,6 +79,25 @@ def test_verify_passes(good_receipt, tmp_git_repo):
         _verify(str(path), None, str(tmp_git_repo), "testuser", None)
 
 
+def test_verify_passes_when_receipt_is_committed_after_code(good_receipt, tmp_git_repo):
+    path, public_key = good_receipt
+    receipt_path = tmp_git_repo / "gpu-proof.json"
+    receipt_path.write_text(path.read_text())
+
+    import subprocess
+
+    subprocess.run(["git", "add", "gpu-proof.json"], cwd=tmp_git_repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "add GPU proof receipt"],
+        cwd=tmp_git_repo,
+        check=True,
+        capture_output=True,
+    )
+
+    with _mock_github_keys(public_key):
+        _verify(str(receipt_path), None, str(tmp_git_repo), "testuser", None)
+
+
 def test_verify_fails_on_bad_signature(good_receipt, tmp_git_repo):
     path, _ = good_receipt
     other_key = Ed25519PrivateKey.generate().public_key()
