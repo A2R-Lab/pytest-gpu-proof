@@ -4,6 +4,9 @@ A pytest plugin that lets you run GPU equivalence tests locally, sign the result
 
 The trust model is simple: if you can push to GitHub, you can sign a receipt. Verification fetches your public keys from `github.com/{username}.keys`, exactly as SSH does.
 
+> **Requirements:** Python 3.8+ · pytest 7.0+ · cryptography 41.0+
+> The package is not yet on PyPI — install from source with `pip install -e .` (see [Installation](#installation)).
+
 ---
 
 ## Why this exists
@@ -36,27 +39,69 @@ pytest --gpu-proof-enable  →  →   gpu-proof verify --receipt gpu-proof.json
 
 ## Installation
 
-```bash
-pip install pytest-gpu-proof
-```
-
-Or from source:
+The package is not yet published to PyPI. Install from a local clone:
 
 ```bash
 git clone <this-repo>
 cd pytest-gpu-proof
-python3 -m pip install -e ".[dev]"
+pip install -e .          # base install (pytest + cryptography)
+pip install -e ".[dev]"   # also installs numpy, pytest-cov
+```
 
-# Older helper script:
-bash install.sh          # installs in editable mode
-bash install.sh dev      # also installs dev dependencies
+Or use the helper script (checks your Python version first):
+
+```bash
+bash install.sh          # base install
+bash install.sh dev      # dev install
+```
+
+Once the package is registered on PyPI, you will be able to install it with:
+
+```bash
+pip install pytest-gpu-proof   # not yet available
 ```
 
 ---
 
 ## Quick start
 
-### 1. Write a test
+### Step 1 — Install from source
+
+```bash
+git clone <this-repo>
+cd pytest-gpu-proof
+pip install -e .
+```
+
+### Step 2 — Run the bundled demo (no GPU needed)
+
+The repo includes a no-GPU demo that works on any machine:
+
+```bash
+cd examples/minimal_python_only
+pytest test_minimal.py --gpu-proof-enable -v
+```
+
+Expected output:
+```
+PASSED test_minimal.py::test_relu
+PASSED test_minimal.py::test_softmax
+...
+[gpu-proof] Receipt written to gpu-proof.json
+[gpu-proof] Signed with key SHA256:...
+```
+
+### Step 3 — Verify the receipt
+
+```bash
+gpu-proof verify --receipt gpu-proof.json
+```
+
+The verifier fetches your public keys from `github.com/{you}.keys` automatically — no secrets needed.
+
+### Step 4 — Use it in your own project
+
+Add the marker and fixture to your tests:
 
 ```python
 import pytest
@@ -72,14 +117,16 @@ def test_my_kernel(gpu_proof_check):
     )
 ```
 
-### 2. Run locally with signing
+Run from **your project's root** (not the pytest-gpu-proof source directory):
 
 ```bash
-pytest tests/ --gpu-proof-enable -v
-# → runs tests, signs with ~/.ssh/id_ed25519, writes gpu-proof.json
+pytest path/to/your/tests/ --gpu-proof-enable -v
+# → writes gpu-proof.json in the current directory
 ```
 
-### 3. Commit the receipt
+> **Note:** The `--gpu-proof-enable` flag only writes a receipt if at least one test is marked with `@pytest.mark.gpu_proof` or uses the `gpu_proof_check` fixture. Running it against the plugin's own `tests/` directory (which tests the plugin internals) will not produce a receipt.
+
+### Step 5 — Commit and verify in CI
 
 ```bash
 git add gpu-proof.json
@@ -87,14 +134,11 @@ git commit -m "update GPU proof receipt"
 git push
 ```
 
-### 4. Verify in GitHub Actions
-
 ```yaml
+# .github/workflows/ci.yml
 - name: Verify GPU proof
   run: gpu-proof verify --receipt gpu-proof.json
 ```
-
-That's it. The verifier fetches your public keys from GitHub automatically.
 
 ---
 

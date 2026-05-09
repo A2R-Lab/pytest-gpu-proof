@@ -52,6 +52,12 @@ class GpuProofPlugin:
         if not self.gpu_proof_config.enabled:
             return
         if not self.test_results:
+            print(
+                "\n[gpu-proof] --gpu-proof-enable is set but no gpu_proof tests were found.\n"
+                "            Add @pytest.mark.gpu_proof to your tests or use the gpu_proof_check fixture.\n"
+                "            No receipt was written.\n"
+                "            Tip: try 'pytest examples/minimal_python_only/test_minimal.py --gpu-proof-enable -v'"
+            )
             return
         self._emit_receipt()
 
