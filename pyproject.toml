@@ -42,8 +42,13 @@ packages = ["src/pytest_gpu_proof"]
 testpaths = ["tests"]
 
 [tool.gpu_proof]
-# Default plugin configuration — can override here or in pytest.ini
+# Default plugin/verifier configuration, read from the rootdir pyproject.toml.
+# CLI flags take precedence over values set here.
 # mode = "local"
-# fingerprint_paths = ["src", "tests"]
 # output = "gpu-proof.json"
-# max_age_days = 30
+# signing_backend = "ed25519"
+# required_marker = "gpu_proof"
+# fail_on_skip = false
+# fingerprint_paths = ["src", "tests"]
+# max_age_days = 30       # verifier freshness default
+# require_gpu = false     # verifier: require environment.gpu_info in the receipt
