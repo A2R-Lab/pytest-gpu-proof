@@ -3,11 +3,14 @@ Standalone receipt verifier.
 
 Checks:
   1. Signature — fetches signer's public keys from github.com/{username}.keys
+     (unsigned receipts are rejected unless allow_unsigned is set)
   2. Fingerprint — recomputes and compares digest
   3. Commit SHA — compares against current repo state
-  4. Test outcomes — all tests in receipt must have passed
-  5. Freshness — receipt must not be older than max_age_days
-  6. Dirty policy — reject dirty-tree receipts if policy requires clean
+  4. Test outcomes — all tests in receipt must have passed; skipped marked
+     tests are rejected unless allow_skipped is set
+  5. GPU info — optionally require environment.gpu_info (require_gpu)
+  6. Freshness — receipt must not be older than max_age_days
+  7. Dirty policy — reject dirty-tree receipts if policy requires clean
 """
 
 import base64
