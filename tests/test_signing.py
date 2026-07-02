@@ -67,6 +67,29 @@ def test_key_fingerprint_format(ssh_key_file):
     assert len(fp) > 10
 
 
+def test_algorithm_derived_from_key_type(ssh_key_file, tmp_path):
+    key_path, _ = ssh_key_file
+    assert SSHSigner(key_path=str(key_path)).algorithm() == "ed25519"
+
+    from cryptography.hazmat.primitives.asymmetric.ec import SECP256R1, generate_private_key
+
+    ec_key = generate_private_key(SECP256R1())
+    ec_path = tmp_path / "id_ecdsa"
+    ec_path.write_bytes(
+        ec_key.private_bytes(Encoding.PEM, PrivateFormat.OpenSSH, NoEncryption())
+    )
+    assert SSHSigner(key_path=str(ec_path)).algorithm() == "ecdsa-sha256"
+
+
+def test_receipt_algorithm_matches_key(ssh_key_file):
+    from pytest_gpu_proof.receipt import finalize_receipt
+
+    key_path, _ = ssh_key_file
+    signer = SSHSigner(key_path=str(key_path))
+    receipt = finalize_receipt({"repo": {}, "tests": []}, signer)
+    assert receipt["signature"]["algorithm"] == "ed25519"
+
+
 def test_missing_key_raises(tmp_path):
     from pytest_gpu_proof.signers.base import VerifierError
     with pytest.raises(VerifierError, match="No SSH private key found"):
