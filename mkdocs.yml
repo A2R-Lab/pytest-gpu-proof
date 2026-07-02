@@ -1,0 +1,38 @@
+site_name: pytest-gpu-proof
+site_description: >-
+  pytest plugin for GPU equivalence testing with signed receipts verified via
+  GitHub SSH keys
+repo_url: https://github.com/A2R-Lab/pytest-gpu-proof
+repo_name: A2R-Lab/pytest-gpu-proof
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - tables
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Local Mode: local_mode.md
+  - CI-GPU Mode: ci_gpu_mode.md
+  - Architecture: architecture.md
+  - Security Model: security_model.md
+  - Landscape: landscape.md
