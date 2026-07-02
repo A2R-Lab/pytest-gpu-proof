@@ -4,7 +4,7 @@ A pytest plugin that lets you run GPU equivalence tests locally, sign the result
 
 The trust model is simple: if you can push to GitHub, you can sign a receipt. Verification fetches your public keys from `github.com/{username}.keys`, exactly as SSH does.
 
-> **Requirements:** Python 3.8+ · pytest 7.0+ · cryptography 41.0+
+> **Requirements:** Python 3.11+ · pytest 7.0+ · cryptography 41.0+
 > The package is not yet on PyPI — install from source with `pip install -e .` (see [Installation](#installation)).
 
 ---
@@ -330,7 +330,7 @@ Tests are CPU-only. No GPU or network access required.
 
 ## Compatibility
 
-- Python 3.8+
+- Python 3.11+
 - pytest 7.0+
 - `cryptography` 41.0+
 - `pytest-xdist` is **not** supported in v1 (parallel workers would write conflicting receipts)

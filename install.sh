@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -e
 
-# Check Python version — requires 3.8+
-PY_TOO_OLD=$(python3 -c "import sys; print(sys.version_info < (3, 8))" 2>/dev/null || echo "True")
+# Check Python version — requires 3.11+
+PY_TOO_OLD=$(python3 -c "import sys; print(sys.version_info < (3, 11))" 2>/dev/null || echo "True")
 if [ "$PY_TOO_OLD" = "True" ]; then
-    echo "ERROR: pytest-gpu-proof requires Python 3.8 or later."
+    echo "ERROR: pytest-gpu-proof requires Python 3.11 or later."
     echo "       You are running: $(python3 --version 2>&1)"
-    echo "       Please switch to Python 3.8+ before installing."
+    echo "       Please switch to Python 3.11+ before installing."
     exit 1
 fi
 

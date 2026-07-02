@@ -7,7 +7,7 @@ name = "pytest-gpu-proof"
 version = "0.1.0"
 description = "pytest plugin for GPU equivalence testing with signed receipts verified via GitHub SSH keys"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 keywords = ["pytest", "gpu", "cuda", "testing", "signing", "attestation"]
 classifiers = [
