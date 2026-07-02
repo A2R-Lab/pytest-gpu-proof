@@ -165,3 +165,14 @@ class SSHSigner(SignerBase):
 
     def key_fingerprint(self) -> str:
         return _public_key_fingerprint(self._public_key)
+
+    def algorithm(self) -> str:
+        if isinstance(self._private_key, Ed25519PrivateKey):
+            return "ed25519"
+        if isinstance(self._private_key, EllipticCurvePrivateKey):
+            return "ecdsa-sha256"
+        if isinstance(self._private_key, RSAPrivateKey):
+            return "rsa-pss-sha256"
+        raise VerifierError(
+            f"Unsupported private key type: {type(self._private_key).__name__}"
+        )

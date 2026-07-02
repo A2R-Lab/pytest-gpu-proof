@@ -10,6 +10,11 @@ class SignerBase(ABC):
     def key_fingerprint(self) -> str:
         ...
 
+    @abstractmethod
+    def algorithm(self) -> str:
+        """Name of the signature algorithm actually used (e.g. 'ed25519')."""
+        ...
+
 
 class VerifierError(Exception):
     pass
