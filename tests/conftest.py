@@ -15,6 +15,18 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_gh_cli(monkeypatch):
+    """Keep the suite hermetic: never shell out to `gh` for the signer login.
+
+    On a developer box with an authenticated gh CLI, receipt building would
+    otherwise hit the network. Signer-resolution tests re-patch explicitly.
+    """
+    monkeypatch.setattr(
+        "pytest_gpu_proof.receipt.get_gh_cli_login", lambda: None
+    )
+
+
 @pytest.fixture
 def ed25519_keypair():
     """Fresh Ed25519 keypair for testing — no disk I/O, no real SSH keys needed."""

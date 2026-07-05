@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from .gitutils import (
     get_branch,
     get_commit_sha,
+    get_gh_cli_login,
     get_github_username,
     get_remote_url,
     is_dirty,
@@ -82,11 +83,22 @@ def build_receipt_payload(
     from .fingerprint import compute_fingerprint
 
     remote_url = get_remote_url()
-    github_username = (
-        override_github_username
-        or config.github_username
-        or get_github_username()
-    )
+    # Signer resolution: explicit override > [tool.gpu_proof]/flag config >
+    # authenticated gh CLI login (the actual keyholder) > origin-remote owner.
+    # The last is only a guess — for org-owned repos it yields the ORG, which
+    # has no SSH keys, so verification would fail; warn when we land there.
+    github_username = override_github_username or config.github_username
+    if not github_username:
+        github_username = get_gh_cli_login()
+    if not github_username:
+        github_username = get_github_username()
+        if github_username:
+            print(
+                f"[gpu-proof] WARNING: signer '{github_username}' was derived "
+                "from the origin remote owner, which may be an org with no SSH "
+                "keys. If verification fails, set --gpu-proof-github-user or "
+                "github_username in [tool.gpu_proof] to the keyholder."
+            )
     fingerprint = compute_fingerprint(config.fingerprint_paths)
 
     return {

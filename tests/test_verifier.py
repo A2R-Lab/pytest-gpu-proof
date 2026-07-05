@@ -281,3 +281,83 @@ def test_verify_fails_on_failed_test(tmp_path, tmp_git_repo, signer_with_key):
     with _mock_github_keys(public_key):
         with pytest.raises(VerificationError, match="did not pass"):
             _verify(str(path), None, str(tmp_git_repo), "testuser", None)
+
+
+# ─── expected-skips baseline ────────────────────────────────────────────────
+
+def _mixed_results():
+    return [
+        {"node_id": "tests/test_add.py::test_add", "outcome": "passed",
+         "duration_s": 0.01, "checks": []},
+        {"node_id": "tests/test_add.py::test_skipped", "outcome": "skipped",
+         "duration_s": 0.0, "checks": []},
+    ]
+
+
+def test_expected_skips_exact_match_passes(tmp_path, tmp_git_repo, signer_with_key):
+    signer, public_key = signer_with_key
+    path = _make_receipt(tmp_path, tmp_git_repo, signer, results=_mixed_results())
+    baseline = tmp_path / "expected_skips.txt"
+    baseline.write_text(
+        "# known-legitimate skips\n"
+        "\n"
+        "tests/test_add.py::test_skipped\n"
+    )
+    with _mock_github_keys(public_key):
+        _verify(
+            str(path), None, str(tmp_git_repo), "testuser", None,
+            expected_skips_path=str(baseline),
+        )
+
+
+def test_expected_skips_rejects_unexpected_skip(tmp_path, tmp_git_repo, signer_with_key):
+    signer, public_key = signer_with_key
+    path = _make_receipt(tmp_path, tmp_git_repo, signer, results=_mixed_results())
+    baseline = tmp_path / "expected_skips.txt"
+    baseline.write_text("tests/test_add.py::test_other_skip\n")
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError, match="NOT in the baseline"):
+            _verify(
+                str(path), None, str(tmp_git_repo), "testuser", None,
+                expected_skips_path=str(baseline),
+            )
+
+
+def test_expected_skips_rejects_stale_baseline(tmp_path, tmp_git_repo, signer_with_key):
+    signer, public_key = signer_with_key
+    # all tests pass — the baseline entry no longer skips
+    path = _make_receipt(tmp_path, tmp_git_repo, signer)
+    baseline = tmp_path / "expected_skips.txt"
+    baseline.write_text("tests/test_add.py::test_skipped\n")
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError, match="stale"):
+            _verify(
+                str(path), None, str(tmp_git_repo), "testuser", None,
+                expected_skips_path=str(baseline),
+            )
+
+
+def test_expected_skips_mutually_exclusive_with_allow_skipped(
+    tmp_path, tmp_git_repo, signer_with_key
+):
+    signer, public_key = signer_with_key
+    path = _make_receipt(tmp_path, tmp_git_repo, signer, results=_mixed_results())
+    baseline = tmp_path / "expected_skips.txt"
+    baseline.write_text("tests/test_add.py::test_skipped\n")
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError, match="mutually exclusive"):
+            _verify(
+                str(path), None, str(tmp_git_repo), "testuser", None,
+                allow_skipped=True, expected_skips_path=str(baseline),
+            )
+
+
+def test_expected_skips_from_toml(tmp_path, tmp_git_repo, signer_with_key):
+    signer, public_key = signer_with_key
+    path = _make_receipt(tmp_path, tmp_git_repo, signer, results=_mixed_results())
+    (tmp_git_repo / "pyproject.toml").write_text(
+        "[tool.gpu_proof]\n"
+        'expected_skips = ["tests/test_add.py::test_skipped"]\n'
+    )
+    with _mock_github_keys(public_key):
+        _verify(str(path), None, str(tmp_git_repo), "testuser", None)

@@ -7,7 +7,8 @@ Checks:
   2. Fingerprint — recomputes and compares digest
   3. Commit SHA — compares against current repo state
   4. Test outcomes — all tests in receipt must have passed; skipped marked
-     tests are rejected unless allow_skipped is set
+     tests are rejected unless allow_skipped is set, or an expected-skips
+     baseline is given and the receipt's skip set matches it EXACTLY
   5. GPU info — optionally require environment.gpu_info (require_gpu)
   6. Freshness — receipt must not be older than max_age_days
   7. Dirty policy — reject dirty-tree receipts if policy requires clean
@@ -43,6 +44,17 @@ def _load_policy(policy_path: Optional[str]) -> dict:
             "Install it with 'pip install pyyaml', or use a .json policy file."
         )
     return yaml.safe_load(text) or {}
+
+
+def _load_expected_skips(path: str) -> set:
+    """Baseline file: one node ID per line; blank lines and '#' comments ignored."""
+    lines = Path(path).read_text().splitlines()
+    entries = set()
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith("#"):
+            entries.add(line)
+    return entries
 
 
 def _receipt_payload_without_sig(receipt: dict) -> bytes:
@@ -86,6 +98,7 @@ def verify_receipt(
     allow_unsigned: bool = False,
     allow_skipped: bool = False,
     require_gpu: Optional[bool] = None,
+    expected_skips_path: Optional[str] = None,
 ) -> bool:
     try:
         _verify(
@@ -97,6 +110,7 @@ def verify_receipt(
             allow_unsigned=allow_unsigned,
             allow_skipped=allow_skipped,
             require_gpu=require_gpu,
+            expected_skips_path=expected_skips_path,
         )
         return True
     except VerificationError as e:
@@ -112,6 +126,7 @@ def _verify(
     max_age_days_override: Optional[int],
     allow_unsigned: bool = False,
     allow_skipped: bool = False,
+    expected_skips_path: Optional[str] = None,
     require_gpu: Optional[bool] = None,
 ):
     from .config import load_toml_defaults
@@ -233,12 +248,51 @@ def _verify(
             f"{len(failed)} test(s) did not pass: {', '.join(failed)}"
         )
     skipped = [t["node_id"] for t in tests if t.get("outcome") == "skipped"]
-    if skipped and not allow_skipped:
+
+    # Expected-skips baseline: the receipt's skip set must match EXACTLY.
+    # Stricter than --allow-skipped (which accepts ANY skips): new skips fail,
+    # and a baselined test that now runs flags the baseline as stale.
+    expected_skips = None
+    if expected_skips_path is not None:
+        if allow_skipped:
+            raise VerificationError(
+                "--expected-skips and --allow-skipped are mutually exclusive: "
+                "the baseline already defines exactly which skips are acceptable."
+            )
+        expected_skips = _load_expected_skips(expected_skips_path)
+    elif not allow_skipped and toml_cfg.get("expected_skips"):
+        expected_skips = set(toml_cfg["expected_skips"])
+
+    if expected_skips is not None:
+        got = set(skipped)
+        unexpected = sorted(got - expected_skips)
+        stale = sorted(expected_skips - got)
+        problems = []
+        if unexpected:
+            problems.append(
+                f"{len(unexpected)} skip(s) NOT in the baseline: {', '.join(unexpected)}"
+            )
+        if stale:
+            problems.append(
+                f"{len(stale)} baseline entr(y/ies) that did NOT skip (stale "
+                f"baseline — update it): {', '.join(stale)}"
+            )
+        if problems:
+            raise VerificationError(
+                "Skipped tests do not match the expected-skips baseline. "
+                + " | ".join(problems)
+            )
+        print(
+            f"[gpu-proof] Skipped tests match the expected baseline "
+            f"({len(expected_skips)} pinned skip(s))"
+        )
+    elif skipped and not allow_skipped:
         raise VerificationError(
             f"{len(skipped)} marked test(s) were skipped: {', '.join(skipped)}. "
-            "Skipped tests prove nothing; pass --allow-skipped to accept them."
+            "Skipped tests prove nothing; pass --allow-skipped to accept them, "
+            "or pin them with --expected-skips BASELINE_FILE."
         )
-    if skipped:
+    elif skipped:
         print(
             f"[gpu-proof] WARNING: {len(skipped)} skipped test(s) accepted "
             "(--allow-skipped)"

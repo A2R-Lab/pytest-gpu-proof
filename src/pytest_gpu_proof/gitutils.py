@@ -51,6 +51,27 @@ def get_github_username() -> Optional[str]:
     return extract_github_username(url) if url else None
 
 
+def get_gh_cli_login() -> Optional[str]:
+    """The authenticated GitHub CLI user, if `gh` is installed and logged in.
+
+    This is the KEYHOLDER — the account whose github.com/<user>.keys will
+    verify the receipt — unlike the origin-remote owner, which for org-owned
+    repos is an org with no SSH keys.
+    """
+    try:
+        result = subprocess.run(
+            ["gh", "api", "user", "--jq", ".login"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        return result.stdout.strip() or None
+    except (subprocess.CalledProcessError, FileNotFoundError,
+            subprocess.TimeoutExpired):
+        return None
+
+
 def get_git_signing_key() -> Optional[str]:
     val = _git("config", "--get", "user.signingKey")
     if not val:

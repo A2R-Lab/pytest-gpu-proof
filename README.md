@@ -225,7 +225,7 @@ python -m pytest_gpu_proof verify --receipt gpu-proof.json
 1. **Signature** — fetches `github.com/{signer}.keys`, verifies Ed25519/ECDSA/RSA signature
 2. **Fingerprint** — recomputes SHA-256 digest of `src/` and `tests/`, compares to receipt
 3. **Commit SHA** — compares receipt commit SHA to current HEAD
-4. **Test outcomes** — all tests recorded in the receipt must have passed; skipped marked tests fail verification unless `--allow-skipped` is passed
+4. **Test outcomes** — all tests recorded in the receipt must have passed; skipped marked tests fail verification unless `--allow-skipped` is passed, or an `--expected-skips` baseline is given and the receipt's skip set matches it exactly
 5. **Freshness** — receipt must be younger than `max_age_days` (default: 30)
 6. **Dirty policy** — configurable via policy file
 7. **GPU info** (optional) — with `--require-gpu` (or `require_gpu = true` in `[tool.gpu_proof]`), the receipt's `environment.gpu_info` must be present
@@ -233,7 +233,8 @@ python -m pytest_gpu_proof verify --receipt gpu-proof.json
 Additional flags:
 
 - `--allow-unsigned` — accept receipts with `"signature": null` (produced by `--gpu-proof-signing-backend=none`). This disables the entire trust story; the verifier prints a loud warning.
-- `--allow-skipped` — accept receipts that contain skipped marked tests.
+- `--allow-skipped` — accept receipts that contain skipped marked tests (any skips, no questions asked).
+- `--expected-skips PATH` — the strict alternative to `--allow-skipped` (the two are mutually exclusive): a baseline file of node IDs (one per line, `#` comments) that the receipt's skipped tests must match **exactly**. A skip not in the baseline fails verification, and a baseline entry that no longer skips fails too (stale baseline — update it). Use this when a project has a small set of permanent, documented skips. Can also be set as an inline list via `expected_skips = [...]` in `[tool.gpu_proof]`.
 - `--require-gpu` — reject receipts whose `environment.gpu_info` is null/absent. This is **modest hardening, not proof**: `gpu_info` is self-reported by the recording machine, so it only guards against accidentally signing on a GPU-less box, not against a dishonest signer.
 
 ---
