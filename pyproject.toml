@@ -7,7 +7,7 @@ name = "pytest-gpu-proof"
 version = "0.1.0"
 description = "pytest plugin for GPU equivalence testing with signed receipts verified via GitHub SSH keys"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 keywords = ["pytest", "gpu", "cuda", "testing", "signing", "attestation"]
 classifiers = [
@@ -42,8 +42,13 @@ packages = ["src/pytest_gpu_proof"]
 testpaths = ["tests"]
 
 [tool.gpu_proof]
-# Default plugin configuration — can override here or in pytest.ini
+# Default plugin/verifier configuration, read from the rootdir pyproject.toml.
+# CLI flags take precedence over values set here.
 # mode = "local"
-# fingerprint_paths = ["src", "tests"]
 # output = "gpu-proof.json"
-# max_age_days = 30
+# signing_backend = "ed25519"
+# required_marker = "gpu_proof"
+# fail_on_skip = false
+# fingerprint_paths = ["src", "tests"]
+# max_age_days = 30       # verifier freshness default
+# require_gpu = false     # verifier: require environment.gpu_info in the receipt

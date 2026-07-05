@@ -3,11 +3,14 @@ Standalone receipt verifier.
 
 Checks:
   1. Signature — fetches signer's public keys from github.com/{username}.keys
+     (unsigned receipts are rejected unless allow_unsigned is set)
   2. Fingerprint — recomputes and compares digest
   3. Commit SHA — compares against current repo state
-  4. Test outcomes — all tests in receipt must have passed
-  5. Freshness — receipt must not be older than max_age_days
-  6. Dirty policy — reject dirty-tree receipts if policy requires clean
+  4. Test outcomes — all tests in receipt must have passed; skipped marked
+     tests are rejected unless allow_skipped is set
+  5. GPU info — optionally require environment.gpu_info (require_gpu)
+  6. Freshness — receipt must not be older than max_age_days
+  7. Dirty policy — reject dirty-tree receipts if policy requires clean
 """
 
 import base64
@@ -29,14 +32,17 @@ class VerificationError(Exception):
 def _load_policy(policy_path: Optional[str]) -> dict:
     if not policy_path:
         return {}
+    text = Path(policy_path).read_text()
+    if policy_path.endswith(".json"):
+        return json.loads(text) or {}
     try:
         import yaml  # type: ignore
-        with open(policy_path) as f:
-            return yaml.safe_load(f) or {}
     except ImportError:
-        import json as _json
-        with open(policy_path) as f:
-            return _json.load(f)
+        raise VerificationError(
+            f"Policy file {policy_path!r} is YAML but PyYAML is not installed. "
+            "Install it with 'pip install pyyaml', or use a .json policy file."
+        )
+    return yaml.safe_load(text) or {}
 
 
 def _receipt_payload_without_sig(receipt: dict) -> bytes:
@@ -77,9 +83,21 @@ def verify_receipt(
     repo_root: str = ".",
     github_user_override: Optional[str] = None,
     max_age_days: Optional[int] = None,
+    allow_unsigned: bool = False,
+    allow_skipped: bool = False,
+    require_gpu: Optional[bool] = None,
 ) -> bool:
     try:
-        _verify(receipt_path, policy_path, repo_root, github_user_override, max_age_days)
+        _verify(
+            receipt_path,
+            policy_path,
+            repo_root,
+            github_user_override,
+            max_age_days,
+            allow_unsigned=allow_unsigned,
+            allow_skipped=allow_skipped,
+            require_gpu=require_gpu,
+        )
         return True
     except VerificationError as e:
         print(f"[gpu-proof] FAIL: {e}", file=sys.stderr)
@@ -92,7 +110,14 @@ def _verify(
     repo_root: str,
     github_user_override: Optional[str],
     max_age_days_override: Optional[int],
+    allow_unsigned: bool = False,
+    allow_skipped: bool = False,
+    require_gpu: Optional[bool] = None,
 ):
+    from .config import load_toml_defaults
+
+    toml_cfg = load_toml_defaults(repo_root)
+
     # --- load receipt ---
     receipt_text = Path(receipt_path).read_text()
     receipt = json.loads(receipt_text)
@@ -103,41 +128,51 @@ def _verify(
 
     sig_block = receipt.get("signature")
     if not sig_block:
-        raise VerificationError("Receipt has no signature block")
-
-    sig_b64 = sig_block.get("value", "")
-    if not sig_b64:
-        raise VerificationError("Signature value is missing")
-
-    try:
-        signature = base64.b64decode(sig_b64)
-    except Exception:
-        raise VerificationError("Signature value is not valid base64")
-
-    # --- verify signature via GitHub public keys ---
-    github_username = (
-        github_user_override
-        or sig_block.get("signer")
-        or receipt.get("repo", {}).get("github_username")
-    )
-    if not github_username:
-        raise VerificationError(
-            "Cannot determine GitHub username. Pass --github-user=USERNAME."
+        if not allow_unsigned:
+            raise VerificationError(
+                "Receipt is UNSIGNED (no signature block). Unsigned receipts prove "
+                "nothing about who ran the tests. Pass --allow-unsigned only if you "
+                "explicitly accept that."
+            )
+        print(
+            "[gpu-proof] WARNING: receipt is UNSIGNED and --allow-unsigned was passed.\n"
+            "[gpu-proof] WARNING: signature verification SKIPPED — this receipt proves\n"
+            "[gpu-proof] WARNING: nothing about who ran the tests or on what machine."
         )
+    else:
+        sig_b64 = sig_block.get("value", "")
+        if not sig_b64:
+            raise VerificationError("Signature value is missing")
 
-    payload_bytes = _receipt_payload_without_sig(receipt)
+        try:
+            signature = base64.b64decode(sig_b64)
+        except Exception:
+            raise VerificationError("Signature value is not valid base64")
 
-    print(f"[gpu-proof] Fetching public keys for @{github_username} …")
-    try:
-        ok = verify_with_github_keys(payload_bytes, signature, github_username)
-    except _VerifierError as e:
-        raise VerificationError(str(e))
-
-    if not ok:
-        raise VerificationError(
-            f"Signature does not match any SSH key registered by @{github_username} on GitHub"
+        # --- verify signature via GitHub public keys ---
+        github_username = (
+            github_user_override
+            or sig_block.get("signer")
+            or receipt.get("repo", {}).get("github_username")
         )
-    print(f"[gpu-proof] Signature valid (signer: @{github_username})")
+        if not github_username:
+            raise VerificationError(
+                "Cannot determine GitHub username. Pass --github-user=USERNAME."
+            )
+
+        payload_bytes = _receipt_payload_without_sig(receipt)
+
+        print(f"[gpu-proof] Fetching public keys for @{github_username} …")
+        try:
+            ok = verify_with_github_keys(payload_bytes, signature, github_username)
+        except _VerifierError as e:
+            raise VerificationError(str(e))
+
+        if not ok:
+            raise VerificationError(
+                f"Signature does not match any SSH key registered by @{github_username} on GitHub"
+            )
+        print(f"[gpu-proof] Signature valid (signer: @{github_username})")
 
     # --- recompute fingerprint ---
     repo = receipt.get("repo", {})
@@ -147,9 +182,12 @@ def _verify(
     from .fingerprint import compute_fingerprint  # noqa: PLC0415 (local import ok here)
 
     current_fp = compute_fingerprint(fp_paths, root=repo_root)
-    if current_fp["digest"] != stored_fp.get("digest"):
+    stored_digest = stored_fp.get("digest")
+    if not stored_digest:
+        raise VerificationError("Receipt fingerprint block is missing its digest")
+    if current_fp["digest"] != stored_digest:
         raise VerificationError(
-            f"Fingerprint mismatch: stored={stored_fp.get('digest')[:12]}… "
+            f"Fingerprint mismatch: stored={stored_digest[:12]}… "
             f"current={current_fp['digest'][:12]}…\n"
             "The code under src/ or tests/ has changed since the receipt was generated."
         )
@@ -187,15 +225,48 @@ def _verify(
     if not tests:
         raise VerificationError("Receipt contains no test results")
 
-    failed = [t["node_id"] for t in tests if t.get("outcome") != "passed"]
+    failed = [
+        t["node_id"] for t in tests if t.get("outcome") not in ("passed", "skipped")
+    ]
     if failed:
         raise VerificationError(
             f"{len(failed)} test(s) did not pass: {', '.join(failed)}"
         )
-    print(f"[gpu-proof] All {len(tests)} test(s) passed")
+    skipped = [t["node_id"] for t in tests if t.get("outcome") == "skipped"]
+    if skipped and not allow_skipped:
+        raise VerificationError(
+            f"{len(skipped)} marked test(s) were skipped: {', '.join(skipped)}. "
+            "Skipped tests prove nothing; pass --allow-skipped to accept them."
+        )
+    if skipped:
+        print(
+            f"[gpu-proof] WARNING: {len(skipped)} skipped test(s) accepted "
+            "(--allow-skipped)"
+        )
+    print(f"[gpu-proof] All {len(tests) - len(skipped)} executed test(s) passed")
+
+    # --- gpu_info policy (modest hardening, not proof) ---
+    if require_gpu is None:
+        require_gpu = bool(toml_cfg.get("require_gpu", False))
+    if require_gpu:
+        gpu_info = (receipt.get("environment") or {}).get("gpu_info")
+        if not gpu_info:
+            raise VerificationError(
+                "Receipt's environment.gpu_info is missing/null but the policy "
+                "requires GPU info (--require-gpu). The recording machine had no "
+                "visible GPU (or nvidia-smi failed)."
+            )
+        print(f"[gpu-proof] GPU info present ({gpu_info.get('name')})")
 
     # --- freshness ---
-    max_days = max_age_days_override or policy.get("max_age_days", 30)
+    if max_age_days_override is not None:
+        max_days = max_age_days_override
+    elif policy.get("max_age_days") is not None:
+        max_days = policy["max_age_days"]
+    elif toml_cfg.get("max_age_days") is not None:
+        max_days = toml_cfg["max_age_days"]
+    else:
+        max_days = 30
     signed_at_str = receipt.get("session", {}).get("ended_at")
     if signed_at_str:
         try:

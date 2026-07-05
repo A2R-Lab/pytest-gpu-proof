@@ -21,7 +21,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pytest-gpu-proof
+          pip install "git+https://github.com/A2R-Lab/pytest-gpu-proof.git"
           # Install your project's GPU dependencies here, e.g.:
           # pip install torch --index-url https://download.pytorch.org/whl/cu121
 

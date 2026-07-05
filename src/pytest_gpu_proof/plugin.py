@@ -39,6 +39,7 @@ class GpuProofPlugin:
     def __init__(self, pytest_config):
         self.gpu_proof_config: GpuProofConfig = load_config(pytest_config)
         self.test_results: List[Dict[str, Any]] = []
+        self.skipped_required: List[str] = []
         self.started_at: str = ""
 
     # ------------------------------------------------------------------
@@ -51,6 +52,21 @@ class GpuProofPlugin:
     def pytest_sessionfinish(self, session, exitstatus):
         if not self.gpu_proof_config.enabled:
             return
+
+        skipped_marked = [
+            t["node_id"] for t in self.test_results if t.get("outcome") == "skipped"
+        ]
+        if self.gpu_proof_config.fail_on_skip and (skipped_marked or self.skipped_required):
+            names = sorted(set(skipped_marked + self.skipped_required))
+            print(
+                "\n[gpu-proof] --gpu-proof-fail-on-skip: "
+                f"{len(names)} marked test(s) were skipped:\n"
+                + "".join(f"            - {n}\n" for n in names)
+                + "            No receipt was written; session marked as failed."
+            )
+            session.exitstatus = 1
+            return
+
         if not self.test_results:
             print(
                 "\n[gpu-proof] --gpu-proof-enable is set but no gpu_proof tests were found.\n"
@@ -65,26 +81,66 @@ class GpuProofPlugin:
     # result collection
     # ------------------------------------------------------------------
 
+    def _is_marked(self, item) -> bool:
+        return bool(
+            item.get_closest_marker(self.gpu_proof_config.required_marker)
+            or item.get_closest_marker("gpu_equivalence")
+        )
+
     @pytest.hookimpl(hookwrapper=True)
     def pytest_runtest_makereport(self, item, call):
         outcome = yield
+        report = outcome.get_result()
+
+        if call.when == "setup" and report.skipped:
+            # Skipped tests never reach the "call" phase — record them here so
+            # they are visible in the receipt (and to --gpu-proof-fail-on-skip)
+            # instead of being silently dropped.
+            if item.get_closest_marker("gpu_required") and not self._is_marked(item):
+                self.skipped_required.append(item.nodeid)
+            if self._is_marked(item):
+                self.test_results.append(
+                    {
+                        "node_id": item.nodeid,
+                        "outcome": "skipped",
+                        "duration_s": round(call.duration, 4),
+                        "checks": [],
+                    }
+                )
+            return
+
+        if call.when == "teardown":
+            # The gpu_proof_check fixture records its checks during fixture
+            # teardown, which happens *after* the call-phase report. Patch the
+            # already-recorded entry here so checks are not silently dropped.
+            checks = getattr(item, "_gpu_proof_checks", None)
+            if checks is not None:
+                for t in reversed(self.test_results):
+                    if t["node_id"] == item.nodeid:
+                        t["checks"] = checks
+                        break
+            return
+
         if call.when != "call":
             return
 
-        checks = getattr(item, "_gpu_proof_checks", None)
-        if checks is None and not (
-            item.get_closest_marker("gpu_proof")
-            or item.get_closest_marker("gpu_equivalence")
-        ):
+        uses_fixture = "gpu_proof_check" in getattr(item, "fixturenames", ())
+        if not uses_fixture and not self._is_marked(item):
             return
 
-        report = outcome.get_result()
+        if report.passed:
+            outcome_str = "passed"
+        elif report.skipped:
+            outcome_str = "skipped"
+        else:
+            outcome_str = "failed"
+
         self.test_results.append(
             {
                 "node_id": item.nodeid,
-                "outcome": "passed" if report.passed else "failed",
+                "outcome": outcome_str,
                 "duration_s": round(call.duration, 4),
-                "checks": checks or [],
+                "checks": [],  # filled in at teardown once the fixture finalizes
             }
         )
 
@@ -99,6 +155,21 @@ class GpuProofPlugin:
 
         ended_at = _utcnow()
         cfg = self.gpu_proof_config
+
+        if cfg.signing_backend == "none":
+            try:
+                payload = build_receipt_payload(cfg, self.test_results, self.started_at, ended_at)
+                receipt = dict(payload)
+                receipt["signature"] = None
+                write_receipt(receipt, cfg.output)
+                print(f"\n[gpu-proof] Receipt written to {cfg.output}")
+                print(
+                    "[gpu-proof] WARNING: signing backend is 'none' — the receipt is UNSIGNED\n"
+                    "            and will fail verification unless --allow-unsigned is passed."
+                )
+            except Exception as e:
+                warnings.warn(f"[gpu-proof] Failed to write receipt: {e}", stacklevel=1)
+            return
 
         try:
             signer = SSHSigner(key_path=cfg.key_path)

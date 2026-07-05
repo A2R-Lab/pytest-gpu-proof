@@ -40,6 +40,27 @@ def main():
         metavar="N",
         help="Override max receipt age in days",
     )
+    vp.add_argument(
+        "--allow-unsigned",
+        action="store_true",
+        default=False,
+        help="Accept UNSIGNED receipts (signature: null). Unsigned receipts prove "
+        "nothing about who ran the tests — use only if you accept that.",
+    )
+    vp.add_argument(
+        "--allow-skipped",
+        action="store_true",
+        default=False,
+        help="Accept receipts that contain skipped marked tests (default: reject)",
+    )
+    vp.add_argument(
+        "--require-gpu",
+        action="store_true",
+        default=None,
+        help="Fail verification if the receipt's environment.gpu_info is null/absent "
+        "(modest hardening, not proof of GPU execution). Can also be set via "
+        "require_gpu = true in [tool.gpu_proof].",
+    )
 
     args = parser.parse_args()
 
@@ -52,6 +73,9 @@ def main():
             repo_root=args.repo,
             github_user_override=args.github_user,
             max_age_days=args.max_age_days,
+            allow_unsigned=args.allow_unsigned,
+            allow_skipped=args.allow_skipped,
+            require_gpu=args.require_gpu,
         )
         sys.exit(0 if ok else 1)
 

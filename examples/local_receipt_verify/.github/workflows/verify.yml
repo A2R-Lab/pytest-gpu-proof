@@ -17,7 +17,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install pytest-gpu-proof
-        run: pip install pytest-gpu-proof
+        run: pip install "git+https://github.com/A2R-Lab/pytest-gpu-proof.git"
 
       - name: Verify receipt
         # The receipt (gpu-proof.json) is committed to the repo.

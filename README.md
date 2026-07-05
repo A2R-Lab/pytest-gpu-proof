@@ -4,7 +4,7 @@ A pytest plugin that lets you run GPU equivalence tests locally, sign the result
 
 The trust model is simple: if you can push to GitHub, you can sign a receipt. Verification fetches your public keys from `github.com/{username}.keys`, exactly as SSH does.
 
-> **Requirements:** Python 3.8+ · pytest 7.0+ · cryptography 41.0+
+> **Requirements:** Python 3.11+ · pytest 7.0+ · cryptography 41.0+
 > The package is not yet on PyPI — install from source with `pip install -e .` (see [Installation](#installation)).
 
 ---
@@ -180,11 +180,25 @@ gpu_proof_check(
 | `--gpu-proof-mode` | `local` | `local` or `ci-gpu` |
 | `--gpu-proof-out` | `gpu-proof.json` | Receipt output path |
 | `--gpu-proof-key` | auto | SSH private key path |
-| `--gpu-proof-signing-backend` | `ed25519` | `ed25519` or `none` |
+| `--gpu-proof-signing-backend` | `ed25519` | `ed25519` or `none` (writes an **unsigned** receipt with `"signature": null`; the verifier rejects it unless `--allow-unsigned` is passed) |
+| `--gpu-proof-required-marker` | `gpu_proof` | Marker name that flags a test for the receipt |
 | `--gpu-proof-fingerprint-paths` | `src,tests` | Comma-separated paths to fingerprint |
 | `--gpu-proof-github-user` | auto | GitHub username (auto-detected from git remote) |
 | `--gpu-proof-policy` | — | Path to policy YAML |
-| `--gpu-proof-fail-on-skip` | off | Fail if any `gpu_required` test is skipped |
+| `--gpu-proof-fail-on-skip` | off | Exit non-zero and write no receipt if any marked or `gpu_required` test is skipped |
+
+Defaults for most of these can also be set in your project's `pyproject.toml`
+under `[tool.gpu_proof]` (CLI flags take precedence):
+
+```toml
+[tool.gpu_proof]
+mode = "local"
+output = "gpu-proof.json"
+fingerprint_paths = ["src", "tests"]
+required_marker = "gpu_proof"
+max_age_days = 30       # used by the verifier
+require_gpu = false     # used by the verifier (see below)
+```
 
 ---
 
@@ -211,9 +225,16 @@ python -m pytest_gpu_proof verify --receipt gpu-proof.json
 1. **Signature** — fetches `github.com/{signer}.keys`, verifies Ed25519/ECDSA/RSA signature
 2. **Fingerprint** — recomputes SHA-256 digest of `src/` and `tests/`, compares to receipt
 3. **Commit SHA** — compares receipt commit SHA to current HEAD
-4. **Test outcomes** — all tests recorded in the receipt must have passed
+4. **Test outcomes** — all tests recorded in the receipt must have passed; skipped marked tests fail verification unless `--allow-skipped` is passed
 5. **Freshness** — receipt must be younger than `max_age_days` (default: 30)
 6. **Dirty policy** — configurable via policy file
+7. **GPU info** (optional) — with `--require-gpu` (or `require_gpu = true` in `[tool.gpu_proof]`), the receipt's `environment.gpu_info` must be present
+
+Additional flags:
+
+- `--allow-unsigned` — accept receipts with `"signature": null` (produced by `--gpu-proof-signing-backend=none`). This disables the entire trust story; the verifier prints a loud warning.
+- `--allow-skipped` — accept receipts that contain skipped marked tests.
+- `--require-gpu` — reject receipts whose `environment.gpu_info` is null/absent. This is **modest hardening, not proof**: `gpu_info` is self-reported by the recording machine, so it only guards against accidentally signing on a GPU-less box, not against a dishonest signer.
 
 ---
 
@@ -291,6 +312,13 @@ A signed receipt proves that **an accepted signer attested to a specific test ru
 
 This is appropriate for **team workflows where the signer is a trusted team member** and the goal is to avoid paying for GPU CI on every merge, not to provide adversarial security guarantees.
 
+The optional `--require-gpu` verifier flag adds a modest extra check — the receipt must contain self-reported `environment.gpu_info` — but this is hardening against mistakes (signing on a GPU-less machine), not proof of GPU execution.
+
+**SSH key support caveats:**
+
+- The plugin signs the raw receipt bytes with the key loaded from disk — it does **not** produce SSHSIG-format signatures, so `ssh-keygen -Y verify` cannot validate receipts. Use `gpu-proof verify` instead.
+- Keys that live only in an SSH agent, and FIDO/hardware-backed `sk-ssh-ed25519`/`sk-ecdsa` keys, are **not** supported: signing needs direct access to a private key file readable by the `cryptography` library.
+
 See [docs/security_model.md](docs/security_model.md) for a full discussion.
 
 ---
@@ -330,7 +358,7 @@ Tests are CPU-only. No GPU or network access required.
 
 ## Compatibility
 
-- Python 3.8+
+- Python 3.11+
 - pytest 7.0+
 - `cryptography` 41.0+
 - `pytest-xdist` is **not** supported in v1 (parallel workers would write conflicting receipts)

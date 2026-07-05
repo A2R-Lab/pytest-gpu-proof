@@ -116,7 +116,7 @@ def finalize_receipt(payload: dict, signer) -> dict:
 
     receipt = dict(payload)
     receipt["signature"] = {
-        "algorithm": "ed25519",
+        "algorithm": signer.algorithm(),
         "backend": "ssh-local",
         "signer": payload["repo"].get("github_username") or "unknown",
         "key_fingerprint": signer.key_fingerprint(),
