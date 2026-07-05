@@ -72,6 +72,31 @@ The receipt is a human-readable JSON file. It is safe to commit — it contains 
 
 No GPU, no secrets, no CUDA dependencies required in CI.
 
+If your suite has a small set of permanent, documented skips, pin them instead
+of waving all skips through: keep a baseline file (one node ID per line, `#`
+comments allowed) and verify with
+
+```yaml
+- name: Verify GPU proof receipt
+  run: gpu-proof verify --receipt gpu-proof.json --expected-skips expected_skips.txt
+```
+
+Verification then fails on any skip *not* in the baseline (something new is
+being silently skipped) **and** on any baseline entry that no longer skips
+(the baseline is stale — update it). `--allow-skipped` remains the loose
+alternative and the two are mutually exclusive.
+
+## Who signs the receipt
+
+The signer identity recorded in the receipt (and whose `github.com/<user>.keys`
+CI verifies against) is resolved in order:
+1. `--gpu-proof-github-user` / `github_username` in `[tool.gpu_proof]`
+2. the authenticated GitHub CLI login (`gh api user`), if `gh` is available —
+   this is the actual keyholder
+3. the origin remote owner, as a last-resort guess — with a warning, because
+   for org-owned repos this is the **org**, which has no SSH keys, and
+   verification would fail. Set option 1 or 2 up properly in that case.
+
 ## Controlling which key is used
 
 By default the plugin tries these in order:

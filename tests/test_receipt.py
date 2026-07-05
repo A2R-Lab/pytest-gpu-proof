@@ -96,3 +96,47 @@ def test_write_receipt(tmp_path, mock_config, sample_test_results, signer, tmp_g
     loaded = json.loads(out.read_text())
     assert loaded["schema_version"] == "1"
     assert "signature" in loaded
+
+
+# ─── signer (github_username) resolution ────────────────────────────────────
+
+def _build(mock_config, sample_test_results, tmp_git_repo):
+    os.chdir(tmp_git_repo)
+    return build_receipt_payload(
+        mock_config, sample_test_results, "2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z"
+    )
+
+
+def test_signer_uses_gh_cli_login_as_keyholder(
+    monkeypatch, mock_config, sample_test_results, tmp_git_repo
+):
+    monkeypatch.setattr(
+        "pytest_gpu_proof.receipt.get_gh_cli_login", lambda: "keyholder"
+    )
+    payload = _build(mock_config, sample_test_results, tmp_git_repo)
+    assert payload["repo"]["github_username"] == "keyholder"
+
+
+def test_signer_config_beats_gh_cli(
+    monkeypatch, mock_config, sample_test_results, tmp_git_repo
+):
+    monkeypatch.setattr(
+        "pytest_gpu_proof.receipt.get_gh_cli_login", lambda: "keyholder"
+    )
+    mock_config.github_username = "configured"
+    payload = _build(mock_config, sample_test_results, tmp_git_repo)
+    assert payload["repo"]["github_username"] == "configured"
+
+
+def test_signer_remote_owner_fallback_warns(
+    monkeypatch, capsys, mock_config, sample_test_results, tmp_git_repo
+):
+    # gh CLI unavailable (autouse fixture) and the origin remote is org-owned
+    import subprocess
+    subprocess.run(
+        ["git", "remote", "add", "origin", "git@github.com:Some-Org/repo.git"],
+        cwd=tmp_git_repo, check=True, capture_output=True,
+    )
+    payload = _build(mock_config, sample_test_results, tmp_git_repo)
+    assert payload["repo"]["github_username"] == "Some-Org"
+    assert "origin remote owner" in capsys.readouterr().out

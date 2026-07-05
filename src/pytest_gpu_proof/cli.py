@@ -54,6 +54,16 @@ def main():
         help="Accept receipts that contain skipped marked tests (default: reject)",
     )
     vp.add_argument(
+        "--expected-skips",
+        default=None,
+        metavar="PATH",
+        help="Baseline file of node IDs (one per line, '#' comments) that the "
+        "receipt's skipped tests must match EXACTLY — new skips fail, and a "
+        "baselined test that now runs flags the baseline as stale. Stricter "
+        "than (and mutually exclusive with) --allow-skipped. Can also be set "
+        "as an inline list via expected_skips in [tool.gpu_proof].",
+    )
+    vp.add_argument(
         "--require-gpu",
         action="store_true",
         default=None,
@@ -76,6 +86,7 @@ def main():
             allow_unsigned=args.allow_unsigned,
             allow_skipped=args.allow_skipped,
             require_gpu=args.require_gpu,
+            expected_skips_path=args.expected_skips,
         )
         sys.exit(0 if ok else 1)
 
