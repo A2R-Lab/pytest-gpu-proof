@@ -61,6 +61,9 @@ def test_is_dirty_submodule_semantics(tmp_path, monkeypatch):
     assert is_dirty() is False
 
     # A moved submodule PIN is a real change: dirty.
+    # (the submodule clone needs its own identity — CI runners have no global one)
+    _git("config", "user.email", "t@t", cwd=parent / "sub")
+    _git("config", "user.name", "t", cwd=parent / "sub")
     (parent / "sub" / "f.txt").write_text("changed")
     _commit_all(parent / "sub", "advance pin")
     assert is_dirty() is True
