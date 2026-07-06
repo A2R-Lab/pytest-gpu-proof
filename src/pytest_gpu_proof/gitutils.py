@@ -25,9 +25,16 @@ def get_branch() -> Optional[str]:
 
 
 def is_dirty() -> bool:
+    # --ignore-submodules=untracked: untracked files INSIDE a submodule (build
+    # deps, caches) cannot change the code a receipt attests — the submodule's
+    # content is pinned by the parent's gitlink, and a *pin* change (a different
+    # or new commit checked out in the submodule) still reports as modified
+    # under this flag. Without it, a consumer whose submodule carries build
+    # artifacts can never produce a clean receipt (first hit: GATO's sqpcpu
+    # baseline submodule).
     try:
         result = subprocess.run(
-            ["git", "status", "--porcelain"],
+            ["git", "status", "--porcelain", "--ignore-submodules=untracked"],
             capture_output=True,
             text=True,
             check=True,
