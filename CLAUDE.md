@@ -60,8 +60,10 @@ Signing covers the canonical (compact, sorted-key) JSON **without** the
 
 - Short single-line commit messages; no Co-Authored-By footer.
 - Flow: feature branch → PR → CI green → merge to `main`. Consumers install
-  from git (`pip install -e` on a submodule); **PyPI is deferred** — see
-  `ROADMAP.md`, it's its own carefully-planned session.
+  from git (`pip install -e` on a submodule) or PyPI. **Releases**: OIDC
+  trusted publishing via `.github/workflows/publish.yml` (TestPyPI on manual
+  dispatch, PyPI on GitHub release) — process in `RELEASING.md`; keep
+  `CHANGELOG.md` current and bump `pyproject.toml` version in the same PR.
 - Reference integration: **GLASS** (github.com/A2R-Lab/GLASS) —
   `test/run_gpu_proof.sh`, `test/expected_skips.txt`,
   `.github/workflows/verify-gpu-proof.yml`. If you change plugin/verifier

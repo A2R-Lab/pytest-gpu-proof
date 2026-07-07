@@ -39,10 +39,16 @@ pytest --gpu-proof-enable  →  →   gpu-proof verify --receipt gpu-proof.json
 
 ## Installation
 
-The package is not yet published to PyPI. Install from a local clone:
+From PyPI (v0.1.0+):
 
 ```bash
-git clone <this-repo>
+pip install pytest-gpu-proof
+```
+
+Or from a clone / git submodule (how the A2R-Lab consumers pin exact versions):
+
+```bash
+git clone https://github.com/A2R-Lab/pytest-gpu-proof
 cd pytest-gpu-proof
 pip install -e .          # base install (pytest + cryptography)
 pip install -e ".[dev]"   # also installs numpy, pytest-cov
@@ -55,11 +61,7 @@ bash install.sh          # base install
 bash install.sh dev      # dev install
 ```
 
-Once the package is registered on PyPI, you will be able to install it with:
-
-```bash
-pip install pytest-gpu-proof   # not yet available
-```
+Maintainers: release process in [RELEASING.md](RELEASING.md).
 
 ---
 
