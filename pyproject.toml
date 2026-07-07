@@ -11,14 +11,29 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 keywords = ["pytest", "gpu", "cuda", "testing", "signing", "attestation"]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Testing",
+    "Topic :: Security :: Cryptography",
 ]
 dependencies = [
     "pytest>=7.0",
     "cryptography>=41.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/A2R-Lab/pytest-gpu-proof"
+Documentation = "https://a2r-lab.github.io/pytest-gpu-proof/"
+Repository = "https://github.com/A2R-Lab/pytest-gpu-proof"
+Issues = "https://github.com/A2R-Lab/pytest-gpu-proof/issues"
+Changelog = "https://github.com/A2R-Lab/pytest-gpu-proof/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
