@@ -1,13 +1,12 @@
-name: Publish
+name: Publish (TestPyPI)
 
-# Real-PyPI lane ONLY — runs exclusively on a published GitHub release, via
-# OIDC trusted publishing (no tokens). The TestPyPI dry-run lane is the
-# separate publish-testpypi.yml workflow (manual dispatch), so a dispatch run
-# never shows a PyPI job. One-time setup: RELEASING.md.
+# Dry-run lane ONLY — manual dispatch, publishes to test.pypi.org via OIDC
+# trusted publishing. Cannot touch real PyPI: this workflow contains no pypi
+# environment and no pypi publisher matches its filename. The real-PyPI lane
+# is publish.yml (GitHub release). One-time setup: RELEASING.md.
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -34,10 +33,10 @@ jobs:
           name: dist
           path: dist/
 
-  publish-pypi:
+  publish-testpypi:
     needs: build
     runs-on: ubuntu-latest
-    environment: pypi
+    environment: testpypi
     permissions:
       id-token: write   # OIDC trusted publishing
     steps:
@@ -46,3 +45,5 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
