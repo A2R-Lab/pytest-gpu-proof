@@ -33,6 +33,7 @@ nav:
   - Quickstart: quickstart.md
   - Local Mode: local_mode.md
   - CI-GPU Mode: ci_gpu_mode.md
+  - Sharding & Merge: sharding.md
   - Architecture: architecture.md
   - Security Model: security_model.md
   - Landscape: landscape.md

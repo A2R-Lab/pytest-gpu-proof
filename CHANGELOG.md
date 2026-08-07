@@ -4,6 +4,17 @@ All notable changes to pytest-gpu-proof are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/) (pre-1.0: minor bumps may break).
 
+## [0.2.0] — unreleased
+
+### Added
+- `gpu-proof merge`: union N shard receipts from one commit into a single
+  re-signed receipt (per-module crash isolation / machine sharding). Refuses
+  shards that disagree on schema, commit SHA, fingerprint, mode, or
+  environment; duplicate node IDs across shards are a hard error. Records
+  per-shard provenance under `session.shards` (additive — the verifier is
+  unchanged). `repo.dirty` is OR-ed; `gpu_info` survives CPU-only shards.
+  Docs: `docs/sharding.md`.
+
 ## [0.1.0] — 2026-07-07
 
 First public release.
