@@ -15,6 +15,12 @@ based on [Keep a Changelog](https://keepachangelog.com/); versions follow
   unchanged). `repo.dirty` is OR-ed; `gpu_info` survives CPU-only shards.
   Docs: `docs/sharding.md`.
 
+### Fixed
+- Explicit CLI values equal to their built-in defaults are no longer silently
+  ignored in favor of `[tool.gpu_proof]` (value-taking options now register a
+  `None` sentinel; `--gpu-proof-fail-on-skip` ORs with the toml value since a
+  store_true flag can only turn it on).
+
 ## [0.1.0] — 2026-07-07
 
 First public release.

@@ -47,10 +47,13 @@ def load_config(pytest_config) -> GpuProofConfig:
             return default
 
     def resolve(opt_name, toml_key, default):
-        """Precedence: CLI flag (when it differs from its built-in default),
-        then [tool.gpu_proof] in pyproject.toml, then the built-in default."""
-        cli = opt(opt_name, default)
-        if cli != default:
+        """Precedence: CLI flag (when explicitly passed), then [tool.gpu_proof]
+        in pyproject.toml, then the built-in default. Value-taking options
+        register with ``default=None`` so an explicit CLI value that happens to
+        equal the built-in default still wins — previously it was silently
+        ignored in favor of the toml value."""
+        cli = opt(opt_name, None)
+        if cli is not None:
             return cli
         toml_val = toml_cfg.get(toml_key)
         if toml_val is not None:
@@ -74,7 +77,10 @@ def load_config(pytest_config) -> GpuProofConfig:
         signing_backend=resolve("--gpu-proof-signing-backend", "signing_backend", "ed25519"),
         policy_path=resolve("--gpu-proof-policy", "policy_path", None),
         required_marker=resolve("--gpu-proof-required-marker", "required_marker", "gpu_proof"),
-        fail_on_skip=bool(resolve("--gpu-proof-fail-on-skip", "fail_on_skip", False)),
+        # store_true flag: False just means "not passed", so OR with the toml
+        # value rather than sentinel-resolving (a CLI flag can only turn it ON).
+        fail_on_skip=bool(opt("--gpu-proof-fail-on-skip", False)
+                          or toml_cfg.get("fail_on_skip", False)),
         fingerprint_paths=paths,
         github_username=resolve("--gpu-proof-github-user", "github_username", None),
         max_age_days=max_age_days,
