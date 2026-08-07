@@ -72,7 +72,52 @@ def main():
         "require_gpu = true in [tool.gpu_proof].",
     )
 
+    # merge
+    mp = subparsers.add_parser(
+        "merge",
+        help="Merge shard receipts from ONE commit into a single re-signed receipt",
+        description=(
+            "Union the tests of N shard receipts (same commit SHA, fingerprint, "
+            "and environment) into one receipt, re-signed with your local SSH "
+            "key, that flows through `gpu-proof verify` unchanged. Shards that "
+            "disagree on anything a receipt pins are refused; duplicate node "
+            "IDs across shards are always an error."
+        ),
+    )
+    mp.add_argument("shards", nargs="+", metavar="RECEIPT",
+                    help="Shard receipt paths (two or more, typically)")
+    mp.add_argument("--out", required=True, metavar="PATH",
+                    help="Path for the merged receipt")
+    mp.add_argument("--github-user", default=None, metavar="USERNAME",
+                    help="Recorded signer identity for the merged receipt "
+                    "(default: the first shard's repo.github_username)")
+    mp.add_argument("--key", default=None, metavar="PATH",
+                    help="SSH private key to sign with (default: git "
+                    "user.signingKey, then ~/.ssh/id_ed25519 etc.)")
+    mp.add_argument("--unsigned", action="store_true", default=False,
+                    help="Write signature: null — the merged receipt then "
+                    "verifies only with --allow-unsigned, loudly")
+
     args = parser.parse_args()
+
+    if args.command == "merge":
+        from .merge import MergeError, merge_receipts
+
+        try:
+            receipt = merge_receipts(
+                args.shards, args.out,
+                github_user=args.github_user,
+                key_path=args.key,
+                unsigned=args.unsigned,
+            )
+        except MergeError as e:
+            print(f"gpu-proof merge: {e}", file=sys.stderr)
+            sys.exit(1)
+        n = len(receipt.get("tests", []))
+        shards = len(receipt.get("session", {}).get("shards", []))
+        print(f"merged {shards} shard(s), {n} tests -> {args.out}"
+              + (" (UNSIGNED)" if args.unsigned else ""))
+        sys.exit(0)
 
     if args.command == "verify":
         from .verify import verify_receipt

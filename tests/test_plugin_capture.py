@@ -274,3 +274,34 @@ def test_cli_overrides_toml_defaults(pytester):
     result.assert_outcomes(passed=1)
     assert (pytester.path / "cli-receipt.json").exists()
     assert not (pytester.path / "toml-receipt.json").exists()
+
+
+def test_cli_equal_to_builtin_default_still_overrides_toml(pytester):
+    """Tri-state regression (0.2.0): an EXPLICIT CLI value that happens to equal
+    the built-in default must beat [tool.gpu_proof] — previously it was
+    silently ignored because "set" was detected by comparing against the
+    built-in default. --gpu-proof-out=gpu-proof.json IS the built-in default."""
+    pytester.makepyprojecttoml(
+        """
+        [tool.pytest.ini_options]
+
+        [tool.gpu_proof]
+        signing_backend = "none"
+        output = "toml-receipt.json"
+        """
+    )
+    pytester.makepyfile(
+        """
+        import pytest
+
+        @pytest.mark.gpu_proof
+        def test_ok():
+            assert True
+        """
+    )
+    result = pytester.runpytest(
+        "--gpu-proof-enable", "--gpu-proof-out=gpu-proof.json"
+    )
+    result.assert_outcomes(passed=1)
+    assert (pytester.path / "gpu-proof.json").exists()
+    assert not (pytester.path / "toml-receipt.json").exists()

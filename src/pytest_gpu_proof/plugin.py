@@ -201,13 +201,13 @@ def pytest_addoption(parser):
     )
     group.addoption(
         "--gpu-proof-mode",
-        default="local",
+        default=None,
         choices=["local", "ci-gpu"],
         help="Execution mode: local (default) or ci-gpu",
     )
     group.addoption(
         "--gpu-proof-out",
-        default="gpu-proof.json",
+        default=None,
         metavar="PATH",
         help="Output path for the receipt JSON (default: gpu-proof.json)",
     )
@@ -219,7 +219,7 @@ def pytest_addoption(parser):
     )
     group.addoption(
         "--gpu-proof-signing-backend",
-        default="ed25519",
+        default=None,
         choices=["ed25519", "none"],
         help="Signing backend (default: ed25519 via SSH key)",
     )
@@ -231,7 +231,7 @@ def pytest_addoption(parser):
     )
     group.addoption(
         "--gpu-proof-required-marker",
-        default="gpu_proof",
+        default=None,
         help="Marker name that flags a test for the receipt (default: gpu_proof)",
     )
     group.addoption(
@@ -242,7 +242,7 @@ def pytest_addoption(parser):
     )
     group.addoption(
         "--gpu-proof-fingerprint-paths",
-        default="src,tests",
+        default=None,
         metavar="PATHS",
         help="Comma-separated paths to fingerprint (default: src,tests)",
     )
