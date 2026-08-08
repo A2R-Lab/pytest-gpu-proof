@@ -263,3 +263,20 @@ def test_verify_rejects_stale_carried_shard(tmp_path, tmp_git_repo, signer_with_
         _verify(str(out), _policy(tmp_path, allow_carried=True,
                                   carried_max_age_days=60),
                 str(tmp_git_repo), "testuser", None)
+
+
+def test_schema1_with_shards_block_rejected(tmp_path, tmp_git_repo, signer_with_key):
+    """A schema-1 receipt must not smuggle a shards block past the v1 checks
+    (shard semantics exist only under schema 2, where they are verified)."""
+    signer, public_key, _ = signer_with_key
+    os.chdir(tmp_git_repo)
+    config = GpuProofConfig(enabled=True, fingerprint_paths=["src", "tests"])
+    payload = build_receipt_payload(config, [_result("t::a")], _utcstamp(), _utcstamp())
+    assert payload["schema_version"] == "1"
+    payload["shards"] = [{"name": "smuggled", "fingerprint": {}, "node_ids": []}]
+    receipt = finalize_receipt(payload, signer)
+    path = tmp_path / "smuggled.json"
+    write_receipt(receipt, str(path))
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError, match="must not carry a shards block"):
+            _verify(str(path), None, str(tmp_git_repo), "testuser", None)
