@@ -60,3 +60,50 @@ an **attestation by the merger**. Shard signatures are recorded as provenance
 but not re-verified at merge time (merging is offline); the merged signature
 is what CI verifies. If shards were signed by someone else, verification of
 the merged receipt attests that *you* vouch for the union.
+
+## Per-shard fingerprints & carry-forward (schema 2)
+
+Declare each invocation as a **shard** and the receipt becomes schema `"2"`,
+carrying that shard's own *narrow* fingerprint over the paths you declare:
+
+```bash
+pytest tests/gpu/test_a.py --gpu-proof-enable \
+    --gpu-proof-shard=test_a \
+    --gpu-proof-shard-fingerprint-paths=tests/gpu/test_a.py,src/kernels_a \
+    --gpu-proof-out=receipts/a.json
+```
+
+`gpu-proof merge` unions schema-2 shards exactly like schema-1 receipts (shard
+names must be unique). The new capability is **carry-forward**:
+
+```bash
+gpu-proof merge --out gpu-proof.json --carry-from last-green/gpu-proof.json \
+    --repo . receipts/*.json
+```
+
+Shards present in the old receipt but absent from the fresh inputs are grafted
+in, **marked `carried`**, iff:
+
+1. the old receipt's commit is an **ancestor** of the fresh one (same history), and
+2. the shard's narrow fingerprint **recomputes identical** against the current
+   tree — the inputs that shard proved are unchanged.
+
+A shard whose inputs changed refuses to carry (re-run it). Freshly re-run
+shards always win over old ones.
+
+### Verification of schema-2 receipts
+
+`gpu-proof verify` additionally checks, for every shard: the narrow
+fingerprint recomputes clean at the verifying tree, and shard membership
+exactly partitions `tests[]`. **Carried shards are rejected by default** — the
+policy must opt in:
+
+```yaml
+allow_carried: true          # default false — the trust boundary
+carried_max_age_days: 30     # carried shard's ORIGINAL run must be fresher
+```
+
+A receipt with carried shards verified under `allow_carried: true` means:
+*every test either ran at this commit, or ran at an ancestor commit on inputs
+that are provably byte-identical today, within the age window* — and the
+merger signed for that claim.

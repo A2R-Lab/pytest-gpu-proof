@@ -101,8 +101,28 @@ def build_receipt_payload(
             )
     fingerprint = compute_fingerprint(config.fingerprint_paths)
 
-    return {
-        "schema_version": "1",
+    # Sharded emission (schema "2", additive): when the run declares a shard
+    # name, the receipt carries a `shards` list whose single entry pins THIS
+    # shard's own narrow fingerprint (its declared paths, defaulting to the
+    # global fingerprint paths) and its test membership by node id. The flat
+    # `tests` list remains authoritative for outcomes; the global fingerprint
+    # keeps its schema-1 meaning. This is what makes per-shard carry-forward
+    # verifiable later: a shard whose narrow fingerprint still recomputes clean
+    # provably ran on identical inputs.
+    shard_name = getattr(config, "shard_name", None)
+    schema_version = "2" if shard_name else "1"
+    shards = None
+    if shard_name:
+        shard_paths = getattr(config, "shard_fingerprint_paths", None) or config.fingerprint_paths
+        shards = [{
+            "name": shard_name,
+            "fingerprint": compute_fingerprint(shard_paths),
+            "node_ids": [t["node_id"] for t in test_results],
+            "carried": None,
+        }]
+
+    payload = {
+        "schema_version": schema_version,
         "mode": config.mode,
         "repo": {
             "remote_url": remote_url,
@@ -120,6 +140,9 @@ def build_receipt_payload(
         "tests": test_results,
         "environment": _env_info(),
     }
+    if shards is not None:
+        payload["shards"] = shards
+    return payload
 
 
 def finalize_receipt(payload: dict, signer) -> dict:

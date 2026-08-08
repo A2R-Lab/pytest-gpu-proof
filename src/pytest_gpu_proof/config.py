@@ -18,6 +18,10 @@ class GpuProofConfig:
     github_username: Optional[str] = None
     max_age_days: int = 30
     require_gpu: bool = False
+    # Sharded emission (schema "2"): a declared shard name + its narrow
+    # fingerprint paths (None -> the global fingerprint_paths).
+    shard_name: Optional[str] = None
+    shard_fingerprint_paths: Optional[List[str]] = None
 
 
 def load_toml_defaults(root: Union[str, Path]) -> Dict[str, Any]:
@@ -66,6 +70,15 @@ def load_config(pytest_config) -> GpuProofConfig:
     else:
         paths = [str(p) for p in raw_paths]
 
+    raw_shard_paths = resolve("--gpu-proof-shard-fingerprint-paths",
+                              "shard_fingerprint_paths", None)
+    if isinstance(raw_shard_paths, str):
+        shard_paths = [p.strip() for p in raw_shard_paths.split(",") if p.strip()]
+    elif raw_shard_paths is not None:
+        shard_paths = [str(p) for p in raw_shard_paths]
+    else:
+        shard_paths = None
+
     max_age = toml_cfg.get("max_age_days")
     max_age_days = int(max_age) if max_age is not None else 30
 
@@ -85,4 +98,6 @@ def load_config(pytest_config) -> GpuProofConfig:
         github_username=resolve("--gpu-proof-github-user", "github_username", None),
         max_age_days=max_age_days,
         require_gpu=bool(toml_cfg.get("require_gpu", False)),
+        shard_name=resolve("--gpu-proof-shard", "shard_name", None),
+        shard_fingerprint_paths=shard_paths,
     )
