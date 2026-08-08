@@ -138,8 +138,13 @@ def _verify(
     receipt = json.loads(receipt_text)
 
     schema = receipt.get("schema_version")
-    if schema != "1":
+    if schema not in ("1", "2"):
         raise VerificationError(f"Unknown schema_version: {schema!r}")
+    if schema == "1" and "shards" in receipt:
+        raise VerificationError(
+            "schema '1' receipts must not carry a shards block (sharded receipts "
+            "are schema '2')"
+        )
 
     sig_block = receipt.get("signature")
     if not sig_block:
@@ -234,6 +239,74 @@ def _verify(
         raise VerificationError(
             "Receipt was generated from a dirty repository and policy requires a clean tree"
         )
+
+    # --- schema 2: per-shard fingerprints + carried-shard policy ---
+    if schema == "2":
+        shards = receipt.get("shards")
+        if not shards or not isinstance(shards, list):
+            raise VerificationError("schema '2' receipt has no shards block")
+        test_ids = {t.get("node_id") for t in receipt.get("tests", [])}
+        claimed: set = set()
+        for shard in shards:
+            name = shard.get("name") or "<unnamed>"
+            ids = set(shard.get("node_ids", []))
+            overlap = claimed & ids
+            if overlap:
+                raise VerificationError(
+                    f"shard {name!r} re-claims node id(s) already claimed by an "
+                    f"earlier shard (e.g. {sorted(overlap)[0]!r})"
+                )
+            claimed |= ids
+            # Each shard's NARROW fingerprint must recompute clean at the
+            # current tree — for carried shards this is exactly the soundness
+            # condition: the inputs that shard proved are unchanged.
+            sfp = shard.get("fingerprint", {})
+            sdigest = sfp.get("digest")
+            spaths = sfp.get("included_paths")
+            if not sdigest or not spaths:
+                raise VerificationError(f"shard {name!r} has no fingerprint")
+            snow = compute_fingerprint(spaths, root=repo_root)
+            if snow["digest"] != sdigest:
+                raise VerificationError(
+                    f"shard {name!r} fingerprint mismatch: stored={sdigest[:12]}… "
+                    f"current={snow['digest'][:12]}… — its inputs changed; "
+                    f"re-run that shard."
+                )
+            carried = shard.get("carried")
+            if carried:
+                if not policy.get("allow_carried", False):
+                    raise VerificationError(
+                        f"shard {name!r} is CARRIED from an earlier receipt and "
+                        f"the policy does not set allow_carried: true. Carried "
+                        f"shards attest a PRIOR run whose inputs are unchanged — "
+                        f"opt in explicitly or re-run the shard."
+                    )
+                carried_max = int(policy.get("carried_max_age_days", 30))
+                orig_end = carried.get("original_ended_at")
+                if not orig_end:
+                    raise VerificationError(
+                        f"carried shard {name!r} has no original_ended_at")
+                ended = datetime.datetime.strptime(
+                    orig_end, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.UTC)
+                age = (datetime.datetime.now(datetime.UTC) - ended).days
+                if age > carried_max:
+                    raise VerificationError(
+                        f"carried shard {name!r} is {age} day(s) old "
+                        f"(carried_max_age_days: {carried_max}) — re-run it."
+                    )
+                print(f"[gpu-proof] shard {name!r}: CARRIED "
+                      f"(from {str(carried.get('original_commit_sha'))[:12]}, "
+                      f"{age}d old, fingerprint clean) — policy allows")
+            else:
+                print(f"[gpu-proof] shard {name!r}: fingerprint OK "
+                      f"({sdigest[:12]}…, {len(ids)} test(s))")
+        if claimed != test_ids:
+            orphans = sorted(test_ids - claimed)[:3]
+            unmatched = sorted(claimed - test_ids)[:3]
+            raise VerificationError(
+                f"shard membership does not partition tests[]: "
+                f"unclaimed={orphans} claimed-but-absent={unmatched}"
+            )
 
     # --- test outcomes ---
     tests = receipt.get("tests", [])

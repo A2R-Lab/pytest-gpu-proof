@@ -73,3 +73,15 @@ that a specific GPU executed a specific workload in a verified environment.
 This is out of scope for v1 but the receipt format is designed to be extendable —
 a `hardware_attestation` block could be added to the `environment` section in a
 future version without breaking existing receipts.
+
+## Carried shards (schema 2)
+
+A carried shard is an attestation about a **prior** run: the tests passed at an
+ancestor commit, and the shard's declared input paths are byte-identical at the
+verified commit (the verifier recomputes this; it is not taken on faith). What
+is NOT re-established: that the prior run's environment still exists, or that
+paths *outside* the shard's declared fingerprint didn't change its behavior —
+declaring too-narrow shard paths weakens the claim, exactly like declaring
+too-narrow global fingerprint paths. That is why `allow_carried` defaults to
+**false**: accepting carried shards is an explicit policy decision, bounded by
+`carried_max_age_days`.

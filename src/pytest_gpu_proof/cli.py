@@ -97,6 +97,15 @@ def main():
     mp.add_argument("--unsigned", action="store_true", default=False,
                     help="Write signature: null — the merged receipt then "
                     "verifies only with --allow-unsigned, loudly")
+    mp.add_argument("--carry-from", default=None, metavar="RECEIPT",
+                    help="Graft still-valid shards from an older schema-2 "
+                    "receipt: each absent-from-fresh shard is carried iff the "
+                    "old commit is an ancestor of the new one AND its narrow "
+                    "fingerprint recomputes clean at the current tree. Carried "
+                    "shards are marked and gated at verify time by policy "
+                    "allow_carried (default: rejected).")
+    mp.add_argument("--repo", default=".", metavar="PATH",
+                    help="Repo root for carry-from fingerprint/ancestry checks")
 
     args = parser.parse_args()
 
@@ -109,6 +118,8 @@ def main():
                 github_user=args.github_user,
                 key_path=args.key,
                 unsigned=args.unsigned,
+                carry_from=args.carry_from,
+                repo_root=args.repo,
             )
         except MergeError as e:
             print(f"gpu-proof merge: {e}", file=sys.stderr)

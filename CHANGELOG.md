@@ -4,6 +4,21 @@ All notable changes to pytest-gpu-proof are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/) (pre-1.0: minor bumps may break).
 
+## [0.3.0] — unreleased
+
+### Added
+- Schema `"2"` sharded receipts: `--gpu-proof-shard NAME` +
+  `--gpu-proof-shard-fingerprint-paths` emit a per-shard narrow fingerprint;
+  `gpu-proof merge` unions schema-2 shards (unique names enforced).
+- Verifiable carry-forward: `gpu-proof merge --carry-from OLD` grafts shards
+  absent from the fresh inputs iff the old commit is an ancestor AND the
+  shard's narrow fingerprint recomputes clean; grafted shards are marked
+  `carried` and the verifier rejects them unless the policy sets
+  `allow_carried: true` (bounded by `carried_max_age_days`, default 30).
+- Verifier: schema-2 checks (per-shard fingerprint recompute, membership
+  partition of `tests[]`, carried-shard policy gate). Schema-1 receipts are
+  unchanged and a schema-1 receipt carrying a `shards` block is rejected.
+
 ## [0.2.0] — 2026-08-07
 
 ### Added

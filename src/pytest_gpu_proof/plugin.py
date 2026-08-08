@@ -247,6 +247,21 @@ def pytest_addoption(parser):
         help="Comma-separated paths to fingerprint (default: src,tests)",
     )
     group.addoption(
+        "--gpu-proof-shard",
+        default=None,
+        metavar="NAME",
+        help="Declare this run as one SHARD of a larger suite: the receipt is "
+        "emitted as schema '2' with a per-shard fingerprint, enabling "
+        "verifiable carry-forward via `gpu-proof merge --carry-from`",
+    )
+    group.addoption(
+        "--gpu-proof-shard-fingerprint-paths",
+        default=None,
+        metavar="PATHS",
+        help="Comma-separated paths for THIS shard's narrow fingerprint "
+        "(default: the global fingerprint paths)",
+    )
+    group.addoption(
         "--gpu-proof-github-user",
         default=None,
         metavar="USERNAME",
