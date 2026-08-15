@@ -17,7 +17,7 @@ GPU CI is expensive. For many teams, the typical workflow is:
 2. Push code and let CI run only CPU tests.
 3. Hope the GPU tests still pass.
 
-This plugin closes that gap by producing a **cryptographically signed receipt** that proves a specific person ran specific tests against specific code at a specific time — verifiable in ordinary CPU-only CI with no GPU and no secrets.
+This plugin closes that gap by producing a **cryptographically signed receipt** that attests that a specific signer ran specific tests against specific code at a specific time — verifiable in ordinary CPU-only CI with no GPU and no secrets.
 
 ---
 

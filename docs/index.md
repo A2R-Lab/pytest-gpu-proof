@@ -27,7 +27,7 @@ pytest --gpu-proof-enable  →  →   gpu-proof verify --receipt gpu-proof.json
 - [Local Mode](local_mode.md) — the default workflow: sign locally, verify in CI
 - [CI-GPU Mode](ci_gpu_mode.md) — run the tests on a GitHub-hosted GPU runner instead
 - [Architecture](architecture.md) — package layout and data flow
-- [Security Model](security_model.md) — what a receipt does and does not prove
+- [Security Model](security_model.md) — what a receipt does and does not establish
 - [Landscape](landscape.md) — why this tool exists rather than an existing one
 
 See the [README on GitHub](https://github.com/A2R-Lab/pytest-gpu-proof#readme) for the full CLI reference, receipt format, and examples.

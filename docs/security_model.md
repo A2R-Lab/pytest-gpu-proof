@@ -1,8 +1,8 @@
 # Security Model
 
-## What a signed receipt proves
+## What a signed receipt establishes
 
-A receipt signed with `pytest-gpu-proof` proves that:
+A receipt signed with `pytest-gpu-proof` establishes that:
 
 1. **A specific signer** (identified by their GitHub SSH key) ...
 2. **attested to a specific test run** (named test node IDs, all of which passed) ...
@@ -10,7 +10,7 @@ A receipt signed with `pytest-gpu-proof` proves that:
 4. **at a specific time** (UTC timestamps in the session block) ...
 5. **at a specific git commit** (commit SHA recorded in the receipt).
 
-## What it does NOT prove
+## What it does NOT establish
 
 | Claim | Status |
 |---|---|
@@ -51,18 +51,18 @@ Use `--gpu-proof-mode=ci-gpu` (GitHub GPU runner) when:
 Strongest                    Weakest
    │
    ├── Hardware attestation (NVIDIA HOPPER TEE, Confidential Computing)
-   │     Proves GPU HW faithfully executed the code
+   │     Establishes that GPU HW faithfully executed the code
    │
    ├── GitHub Actions GPU runner + Sigstore keyless
-   │     Proves GitHub's infrastructure ran the code
+   │     Establishes that GitHub's infrastructure ran the code
    │     Signer identity tied to GitHub OIDC, logged in Rekor transparency log
    │
    ├── GitHub Actions GPU runner + SSH key (CI-GPU mode)
-   │     Proves a CI job ran the code
+   │     Establishes that a CI job ran the code
    │     Key is a GitHub Actions secret, not on any developer laptop
    │
    └── Local SSH key (local mode — this plugin's default)
-         Proves a developer with GitHub push access ran the code
+         Establishes that a developer with GitHub push access ran the code
          Key security depends on the developer's machine
 ```
 
