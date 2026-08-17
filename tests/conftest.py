@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import tempfile
+import subprocess
 
 import pytest
 
@@ -35,6 +36,25 @@ def ed25519_keypair():
     return private_key, public_key
 
 
+@pytest.fixture(autouse=True)
+def _pytester_git_repo(request):
+    """Receipt-emission integration tests run in a real, committed git tree."""
+    if "pytester" not in request.fixturenames:
+        return
+    pytester = request.getfixturevalue("pytester")
+    subprocess.run(["git", "init", "-q"], cwd=pytester.path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=pytester.path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=pytester.path, check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "git@github.com:testuser/example.git"],
+        cwd=pytester.path,
+        check=True,
+    )
+    (pytester.path / ".gitkeep").write_text("")
+    subprocess.run(["git", "add", ".gitkeep"], cwd=pytester.path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=pytester.path, check=True)
+
+
 @pytest.fixture
 def tmp_git_repo(tmp_path):
     """Minimal git repo with a couple of tracked files."""
@@ -60,5 +80,12 @@ def tmp_git_repo(tmp_path):
     subprocess.run(
         ["git", "commit", "-m", "init"],
         cwd=tmp_path, check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "remote", "add", "origin", "git@github.com:testuser/example.git"],
+        cwd=tmp_path, check=True, capture_output=True,
+    )
+    (tmp_path / ".git" / "info" / "exclude").write_text(
+        "*.json\nid_*\nexpected_skips.txt\npyproject.toml\n"
     )
     return tmp_path

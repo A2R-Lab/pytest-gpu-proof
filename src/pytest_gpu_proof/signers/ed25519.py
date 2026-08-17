@@ -36,10 +36,10 @@ from cryptography.hazmat.primitives.serialization import (
 from .base import SignerBase, VerifierError
 
 
-def _discover_ssh_key() -> Optional[str]:
+def _discover_ssh_key(root: str = ".") -> Optional[str]:
     from pytest_gpu_proof.gitutils import get_git_signing_key
 
-    signing_key = get_git_signing_key()
+    signing_key = get_git_signing_key(root)
     if signing_key and os.path.exists(signing_key):
         return signing_key
 
@@ -59,6 +59,16 @@ def _public_key_fingerprint(public_key) -> str:
     raw = base64.b64decode(b64_part)
     digest = hashlib.sha256(raw).digest()
     return "SHA256:" + base64.b64encode(digest).decode().rstrip("=")
+
+
+def public_key_algorithm(public_key) -> str:
+    if isinstance(public_key, Ed25519PublicKey):
+        return "ed25519"
+    if isinstance(public_key, EllipticCurvePublicKey):
+        return "ecdsa-sha256"
+    if isinstance(public_key, RSAPublicKey):
+        return "rsa-pss-sha256"
+    raise VerifierError(f"Unsupported public key type: {type(public_key).__name__}")
 
 
 def _sign_with_key(private_key, data: bytes) -> bytes:
@@ -132,12 +142,20 @@ def verify_with_github_keys(data: bytes, signature: bytes, github_username: str)
     return any(_verify_with_key(k, signature, data) for k in keys)
 
 
+def find_verifying_github_key(data: bytes, signature: bytes, github_username: str):
+    """Return the matching GitHub key, or ``None`` when none verifies."""
+    for key in fetch_github_public_keys(github_username):
+        if _verify_with_key(key, signature, data):
+            return key
+    return None
+
+
 class SSHSigner(SignerBase):
     """Signs with the developer's SSH private key (same key used to push to GitHub)."""
 
-    def __init__(self, key_path: Optional[str] = None):
+    def __init__(self, key_path: Optional[str] = None, root: str = "."):
         if key_path is None:
-            key_path = _discover_ssh_key()
+            key_path = _discover_ssh_key(root)
         if key_path is None:
             raise VerifierError(
                 "No SSH private key found. Tried git config user.signingKey and "
@@ -167,12 +185,4 @@ class SSHSigner(SignerBase):
         return _public_key_fingerprint(self._public_key)
 
     def algorithm(self) -> str:
-        if isinstance(self._private_key, Ed25519PrivateKey):
-            return "ed25519"
-        if isinstance(self._private_key, EllipticCurvePrivateKey):
-            return "ecdsa-sha256"
-        if isinstance(self._private_key, RSAPrivateKey):
-            return "rsa-pss-sha256"
-        raise VerifierError(
-            f"Unsupported private key type: {type(self._private_key).__name__}"
-        )
+        return public_key_algorithm(self._public_key)

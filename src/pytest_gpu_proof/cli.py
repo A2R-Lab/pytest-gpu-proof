@@ -98,7 +98,7 @@ def main():
                     help="Write signature: null — the merged receipt then "
                     "verifies only with --allow-unsigned, loudly")
     mp.add_argument("--carry-from", default=None, metavar="RECEIPT",
-                    help="Graft still-valid shards from an older schema-2 "
+                    help="Graft still-valid shards from an older sharded "
                     "receipt: each absent-from-fresh shard is carried iff the "
                     "old commit is an ancestor of the new one AND its narrow "
                     "fingerprint recomputes clean at the current tree. Carried "
@@ -130,7 +130,7 @@ def main():
               + (" (UNSIGNED)" if args.unsigned else ""))
         sys.exit(0)
 
-    if args.command == "verify":
+    if args.command == "verify":  # pragma: no branch - argparse requires a known subcommand
         from .verify import verify_receipt
 
         ok = verify_receipt(

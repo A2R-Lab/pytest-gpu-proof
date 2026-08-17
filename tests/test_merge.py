@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 from pytest_gpu_proof.config import GpuProofConfig
-from pytest_gpu_proof.merge import MergeError, merge_payloads, merge_receipts
+from pytest_gpu_proof.merge import MergeError, load_receipt, merge_payloads, merge_receipts
 from pytest_gpu_proof.receipt import build_receipt_payload, finalize_receipt, write_receipt
 from pytest_gpu_proof.signers.ed25519 import SSHSigner, _verify_with_key
 from pytest_gpu_proof.verify import verify_receipt
@@ -58,8 +58,8 @@ def _shard(tmp_path, tmp_git_repo, signer, name, results, *,
 
 def _mock_github_keys(public_key):
     def _fake_verify(data, signature, username):
-        return _verify_with_key(public_key, signature, data)
-    return patch("pytest_gpu_proof.verify.verify_with_github_keys",
+        return public_key if _verify_with_key(public_key, signature, data) else None
+    return patch("pytest_gpu_proof.verify.find_verifying_github_key",
                  side_effect=_fake_verify)
 
 
@@ -161,3 +161,77 @@ def test_gpu_info_survives_cpu_only_shard(tmp_path, tmp_git_repo, signer_with_ke
     merged = merge_payloads([json.loads(a.read_text()), json.loads(b.read_text())],
                             ["a.json", "b.json"])
     assert merged["environment"]["gpu_info"] == gpu
+
+
+def test_load_receipt_rejects_bad_inputs(tmp_path):
+    with pytest.raises(MergeError, match="readable"):
+        load_receipt(str(tmp_path / "missing.json"))
+    bad = tmp_path / "bad.json"
+    bad.write_text("[]")
+    with pytest.raises(MergeError, match="no 'tests'"):
+        load_receipt(str(bad))
+
+
+def test_merge_rejects_empty_unsupported_and_zero_tests():
+    with pytest.raises(MergeError, match="nothing"):
+        merge_payloads([], [])
+    with pytest.raises(MergeError, match="unsupported"):
+        merge_payloads([{"schema_version": "9", "tests": [{}]}], ["x"])
+    base = {
+        "schema_version": "3",
+        "repo": {"commit_sha": "a", "dirty": False},
+        "fingerprint": {"digest": "d"},
+        "mode": "local",
+        "environment": {},
+        "session": {"started_at": "a", "ended_at": "b", "outcome": "passed"},
+        "tests": [],
+    }
+    with pytest.raises(MergeError, match="zero tests"):
+        merge_payloads([base], ["x"])
+
+
+def test_merge_schema_and_mode_mismatch(tmp_path, tmp_git_repo, signer_with_key):
+    signer, _, _ = signer_with_key
+    a = json.loads(_shard(tmp_path, tmp_git_repo, signer, "a.json", [_result("t::a")]).read_text())
+    b = json.loads(_shard(tmp_path, tmp_git_repo, signer, "b.json", [_result("t::b")]).read_text())
+    b["schema_version"] = "2"
+    with pytest.raises(MergeError, match="schema_version"):
+        merge_payloads([a, b], ["a", "b"])
+    b = dict(a)
+    b["tests"] = [_result("t::b")]
+    b["mode"] = "ci-gpu"
+    with pytest.raises(MergeError, match="mode"):
+        merge_payloads([a, b], ["a", "b"])
+
+
+def test_merge_failed_session_and_github_override(
+    tmp_path, tmp_git_repo, signer_with_key
+):
+    signer, _, key_path = signer_with_key
+    a = _shard(tmp_path, tmp_git_repo, signer, "a.json", [_result("t::a")])
+    b = _shard(
+        tmp_path, tmp_git_repo, signer, "b.json", [_result("t::b")],
+        mutate=lambda p: p["session"].__setitem__("outcome", "failed"),
+    )
+    out = tmp_path / "merged.json"
+    merged = merge_receipts(
+        [str(a), str(b)], str(out), key_path=key_path, github_user="merger"
+    )
+    assert merged["session"]["outcome"] == "failed"
+    assert merged["signer"]["github_user"] == "merger"
+
+
+def test_schema1_merge_has_no_schema3_session_fields():
+    base = {
+        "schema_version": "1",
+        "repo": {"commit_sha": "a", "dirty": False},
+        "fingerprint": {"digest": "d"},
+        "mode": "local",
+        "environment": {},
+        "session": {"started_at": "a", "ended_at": "b"},
+        "tests": [_result("t::a")],
+        "signature": None,
+    }
+    merged = merge_payloads([base], ["one.json"])
+    assert "outcome" not in merged["session"]
+    assert "shards" not in merged
