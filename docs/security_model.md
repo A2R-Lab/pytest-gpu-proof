@@ -1,87 +1,100 @@
-# Security Model
+# Security model
 
-## What a signed receipt establishes
+## What verification establishes
 
-A receipt signed with `pytest-gpu-proof` establishes that:
+A valid schema-3 receipt establishes that a private-key holder corresponding
+to a current SSH public key on the named GitHub account signed a payload that:
 
-1. **A specific signer** (identified by their GitHub SSH key) ...
-2. **attested to a specific test run** (named test node IDs, all of which passed) ...
-3. **over a specific code state** (SHA-256 fingerprint of `src/` and `tests/`) ...
-4. **at a specific time** (UTC timestamps in the session block) ...
-5. **at a specific git commit** (commit SHA recorded in the receipt).
+- names an exact selected pytest collection;
+- records terminal session, test, and comparison outcomes;
+- binds a Git commit and deterministic source manifest;
+- records UTC run times and software/environment metadata;
+- satisfies the repository's verification policy at verification time.
 
-## What it does NOT establish
+In plain language: **the signer attests that these tests passed over this code
+state at this time**.
 
-| Claim | Status |
+## What it does not establish
+
+| Claim | Established? |
 |---|---|
-| The local machine was uncompromised | ❌ Not proven |
-| The GPU hardware ran the code faithfully | ❌ Not proven (no hardware attestation) |
-| The signing key was stored in a hardware security module | ❌ Not proven |
-| The tests were run exactly once and not cherry-picked | ❌ Not enforced by the receipt alone |
-| The signer is who they claim to be (beyond their GitHub identity) | ❌ Depends on GitHub account security |
+| The signing machine was uncompromised | No |
+| A physical GPU executed every operation | No |
+| Self-reported GPU metadata is honest | No |
+| The tests are sufficient or scientifically valid | No |
+| The signer ran the tests exactly once | No |
+| GitHub account/key control maps to a legal identity | No |
+| A merged input shard's original signature was verified by the merger | No |
 
-## Why a plain hash is not enough
+This is not remote execution proof, a trusted execution environment, or
+hardware attestation. `--require-gpu` catches accidental GPU-less recording;
+it does not resist a dishonest signer.
 
-A SHA-256 hash of the code can be recomputed by anyone without running the tests.
-A signed receipt requires the private key, which only the signer holds — so the receipt
-proves the signer's involvement, not just the existence of a code state.
+## Why it is useful
 
-## Why local signing is still useful
+Many GPU projects otherwise rely on an unaudited statement that someone ran
+tests locally. The receipt makes that workflow explicit and machine-checkable:
 
-For team workflows, the practical threat is **accidental breakage**, not adversarial attack.
-The receipt answers the question "did someone with write access to this repository actually
-run these GPU tests against this exact code and confirm they passed?" That is sufficient for:
+- code drift invalidates the manifest;
+- stale receipts fail freshness policy;
+- incomplete collections and setup/teardown failures are visible;
+- signer identity and key fingerprint are signed;
+- contributor receipts can be reviewed in open mode;
+- sensitive repositories can restrict users or keys.
 
-- Avoiding GPU cloud spend on every CI run
-- Auditing which commits have been GPU-validated and by whom
-- Catching the common failure mode of "tests passed last time I ran them manually"
+The practical target is accidental breakage and accountable review, not a
+malicious developer who controls both the test environment and signing key.
 
-## When to prefer GitHub GPU execution instead
+## Signer policy
 
-Use `--gpu-proof-mode=ci-gpu` (GitHub GPU runner) when:
+Open mode accepts any valid GitHub-key holder. It does not imply repository
+write access; GitHub branch protection and PR review remain responsible for
+authorization. This is intentional so external contributors can submit
+receipts signed by themselves.
 
-- Your team cannot trust individual developer machines.
-- You need proof that runs happened in a controlled environment.
-- Your compliance requirements specify where tests must run.
-- You want the receipt produced by a key that is not on a developer laptop.
+Restricted mode adds repository-owned username and/or key-fingerprint
+allowlists. If both are configured, both must match.
 
-## Trust hierarchy
+GitHub key lookup uses the account's **current** `.keys` endpoint. Key removal
+therefore invalidates future verification of old receipts unless another
+registered key happens to match. This is useful revocation behavior, but the
+project does not provide archival key transparency.
 
-```
-Strongest                    Weakest
-   │
-   ├── Hardware attestation (NVIDIA HOPPER TEE, Confidential Computing)
-   │     Establishes that GPU HW faithfully executed the code
-   │
-   ├── GitHub Actions GPU runner + Sigstore keyless
-   │     Establishes that GitHub's infrastructure ran the code
-   │     Signer identity tied to GitHub OIDC, logged in Rekor transparency log
-   │
-   ├── GitHub Actions GPU runner + SSH key (CI-GPU mode)
-   │     Establishes that a CI job ran the code
-   │     Key is a GitHub Actions secret, not on any developer laptop
-   │
-   └── Local SSH key (local mode — this plugin's default)
-         Establishes that a developer with GitHub push access ran the code
-         Key security depends on the developer's machine
-```
+## Source and test scope
 
-## Future extension: hardware attestation
+The default source scope is the whole tracked repository. Narrower global or
+shard scopes weaken the claim because omitted files may influence builds or
+tests. Policy can require exact path lists and an exact test node-ID manifest.
 
-NVIDIA's Attestation SDK (Hopper and later) can produce hardware-level evidence
-that a specific GPU executed a specific workload in a verified environment.
-This is out of scope for v1 but the receipt format is designed to be extendable —
-a `hardware_attestation` block could be added to the `environment` section in a
-future version without breaking existing receipts.
+Ignored and generated inputs are not included automatically; projects must
+declare them through `fingerprint_extra_paths`. Missing, empty, unreadable,
+escaping, or unmerged inputs fail closed.
 
-## Carried shards (schema 2)
+## Dirty trees and replay
 
-A carried shard is an attestation about a **prior** run: the tests passed at an
-ancestor commit, and the shard's declared input paths are byte-identical at the
-verified commit (the verifier recomputes this; it is not taken on faith). What
-is NOT re-established: that the prior run's environment still exists, or that
-paths *outside* the shard's declared fingerprint didn't change its behavior —
-declaring too-narrow shard paths weakens the claim, exactly like declaring
-too-narrow global fingerprint paths. That is why `allow_carried` defaults to
-**false**: accepting carried shards is an explicit policy decision, bounded by
-`carried_max_age_days`.
+Schema 3 rejects dirty recording and verification trees by default. A receipt
+may verify at its exact commit or a descendant only when the source manifest
+still matches. Freshness limits replay duration but no server-issued nonce is
+currently used.
+
+`allow_dirty: true`, long age limits, `--allow-skipped`, and
+`--allow-unsigned` weaken guarantees. Unsigned mode authenticates no signer.
+
+## Merge and carry-forward
+
+The merger records shard signer provenance but does not fetch keys or verify
+each input signature. The merger's signature attests to the union. A review
+workflow that needs independent shard authentication should verify every
+input before merging.
+
+Carry-forward means a test passed at an ancestor commit and its declared shard
+inputs are byte-identical now. It does not establish that omitted dependencies
+or the old environment remain equivalent. Carried shards are rejected unless
+policy opts in and bounds their original age.
+
+## Stronger alternatives
+
+Use controlled GPU CI when the local machine cannot be trusted. Hardware
+attestation, confidential computing, Sigstore/OIDC provenance, and transparent
+execution logs can establish stronger properties, but are outside this
+plugin's current scope.

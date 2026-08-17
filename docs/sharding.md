@@ -1,109 +1,77 @@
-# Sharded runs & merging receipts
+# Sharding and merge
 
-Large suites often can't (or shouldn't) run as one pytest session: per-module
-subprocesses give crash isolation (one CUDA abort no longer erases the whole
-run's results), and big projects split GPU tests across invocations or
-machines. Each invocation emits its own receipt; CI wants **one** artifact.
+Large GPU suites often need crash isolation or shorter retry units. Run each
+shard as a separate pytest process. Receipt emission deliberately rejects
+xdist workers because concurrent hooks cannot safely own one artifact.
 
-## Emit one receipt per shard
-
-Point each invocation at its own output path:
+## Record explicit shards
 
 ```bash
-pytest tests/gpu/test_a.py --gpu-proof-enable --gpu-proof-out=receipts/a.json
-pytest tests/gpu/test_b.py --gpu-proof-enable --gpu-proof-out=receipts/b.json
+pytest tests/gpu/l1 --gpu-proof-enable \
+  --gpu-proof-shard=l1 \
+  --gpu-proof-shard-fingerprint-paths=src/l1,tests/gpu/l1 \
+  --gpu-proof-shard-fingerprint-extra-paths=generated/l1.cuh \
+  --gpu-proof-out=receipts/l1.json
 ```
 
-Every shard receipt is a complete, individually verifiable receipt.
+Each input is independently readable as a complete schema-3 receipt. The
+shard block adds a unique name, narrow manifest, exact member node IDs,
+environment, timestamps, and optional carry metadata.
 
 ## Merge
 
 ```bash
-gpu-proof merge --out gpu-proof.json receipts/a.json receipts/b.json
+gpu-proof merge receipts/l1.json receipts/solvers.json \
+  --out gpu-proof.json \
+  --github-user YOUR_USER
 ```
 
-`merge` unions the shards' `tests`, spans `session.started_at`/`ended_at`
-across them, records per-shard provenance under `session.shards`
-(`source`, `node_count`, timestamps, and each shard's recorded signer), and
-**re-signs the merged payload with your local SSH key**. The result flows
-through `gpu-proof verify` completely unchanged — same schema, same seven
-checks.
+Merge refuses inputs that disagree on:
 
-Options:
+- schema, commit, global fingerprint, or mode;
+- Python, platform, pytest, or plugin version;
+- duplicate test node IDs or duplicate shard names.
 
-- `--github-user USERNAME` — recorded signer identity for the merged receipt
-  (default: the first shard's `repo.github_username`).
-- `--key PATH` — SSH private key (default: `git config user.signingKey`, then
-  `~/.ssh/id_ed25519` / `id_ecdsa` / `id_rsa`).
-- `--unsigned` — write `signature: null`; verifies only with
-  `--allow-unsigned`, loudly.
+Dirty state is ORed. GPU information comes from the first input that has it.
+Session times span the inputs and schema-3 session outcome fails if any input
+session failed.
 
-## What merge refuses
+The merged receipt records input source names, counts, times, and recorded
+signers, then signs the result with the merger's key. Input signatures are
+provenance, not independently verified during offline merge. The merger
+attests to the union.
 
-A merged receipt must mean exactly what a single-session receipt means, so
-`merge` hard-refuses shards that disagree on anything a receipt pins:
-
-- `schema_version`, `repo.commit_sha`, `fingerprint` (digest + paths),
-  `mode`, or the `environment` the tests ran under (python/pytest/plugin
-  versions, platform);
-- **duplicate node IDs across shards** — two shards attesting the same test is
-  a sharding bug in the runner, never something to dedupe silently.
-
-`repo.dirty` is OR-ed: one dirty shard makes the merged attestation dirty, and
-your verify-time dirty policy applies honestly. `gpu_info` is taken from the
-first shard that has one, so a CPU-only shard doesn't erase the GPU record.
-
-## Trust model
-
-Consistent with the [security model](security_model.md): the merged receipt is
-an **attestation by the merger**. Shard signatures are recorded as provenance
-but not re-verified at merge time (merging is offline); the merged signature
-is what CI verifies. If shards were signed by someone else, verification of
-the merged receipt attests that *you* vouch for the union.
-
-## Per-shard fingerprints & carry-forward (schema 2)
-
-Declare each invocation as a **shard** and the receipt becomes schema `"2"`,
-carrying that shard's own *narrow* fingerprint over the paths you declare:
+## Carry forward unchanged shards
 
 ```bash
-pytest tests/gpu/test_a.py --gpu-proof-enable \
-    --gpu-proof-shard=test_a \
-    --gpu-proof-shard-fingerprint-paths=tests/gpu/test_a.py,src/kernels_a \
-    --gpu-proof-out=receipts/a.json
+gpu-proof merge receipts/fresh-l1.json \
+  --carry-from last-green/gpu-proof.json \
+  --repo . \
+  --out gpu-proof.json
 ```
 
-`gpu-proof merge` unions schema-2 shards exactly like schema-1 receipts (shard
-names must be unique). The new capability is **carry-forward**:
+An absent old shard is carried only when:
 
-```bash
-gpu-proof merge --out gpu-proof.json --carry-from last-green/gpu-proof.json \
-    --repo . receipts/*.json
-```
+1. its receipt commit is the current commit or an ancestor;
+2. its stored narrow manifest—including explicit extra paths—recomputes
+   identically at the current tree;
+3. it does not duplicate a fresh node ID;
+4. every claimed node ID exists in the old tests list.
 
-Shards present in the old receipt but absent from the fresh inputs are grafted
-in, **marked `carried`**, iff:
+Freshly rerun shards always win. Changed or malformed scopes require a rerun.
 
-1. the old receipt's commit is an **ancestor** of the fresh one (same history), and
-2. the shard's narrow fingerprint **recomputes identical** against the current
-   tree — the inputs that shard proved are unchanged.
-
-A shard whose inputs changed refuses to carry (re-run it). Freshly re-run
-shards always win over old ones.
-
-### Verification of schema-2 receipts
-
-`gpu-proof verify` additionally checks, for every shard: the narrow
-fingerprint recomputes clean at the verifying tree, and shard membership
-exactly partitions `tests[]`. **Carried shards are rejected by default** — the
-policy must opt in:
+Verification rejects carried shards by default:
 
 ```yaml
-allow_carried: true          # default false — the trust boundary
-carried_max_age_days: 30     # carried shard's ORIGINAL run must be fresher
+allow_carried: true
+carried_max_age_days: 14
+required_shard_fingerprints:
+  l1:
+    paths: [src/l1, tests/gpu/l1]
+    extra_paths: [generated/l1.cuh]
+    excluded_paths: [gpu-proof.json]
 ```
 
-A receipt with carried shards verified under `allow_carried: true` means:
-*every test either ran at this commit, or ran at an ancestor commit on inputs
-that are provably byte-identical today, within the age window* — and the
-merger signed for that claim.
+The required shard map pins both the full shard set and every declared scope.
+Carry-forward remains weaker than a fresh run; use it only when the dependency
+boundaries are reviewable and complete.

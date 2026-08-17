@@ -32,6 +32,7 @@ nav:
   - Home: index.md
   - Quickstart: quickstart.md
   - Local Mode: local_mode.md
+  - Verification Policy: policy.md
   - CI-GPU Mode: ci_gpu_mode.md
   - Sharding & Merge: sharding.md
   - Architecture: architecture.md

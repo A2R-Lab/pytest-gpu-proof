@@ -4,6 +4,49 @@ All notable changes to pytest-gpu-proof are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/) (pre-1.0: minor bumps may break).
 
+## [Unreleased] — 0.4.0
+
+### Added
+
+- Schema `"3"`: signer username, key fingerprint, key algorithm, exact test
+  collection, session outcome, pytest arguments, and per-shard environment/time
+  are included in the signed payload.
+- Open contributor and restricted signer policies. Restricted mode supports
+  username and exact SSH-key-fingerprint allowlists.
+- Policy pinning for mode, global tracked/extra fingerprint scope, exact test
+  manifest, shard names, and per-shard tracked/extra scope.
+- Explicit fingerprint paths for ignored/generated inputs and manifest support
+  for symlinks and submodule gitlinks.
+- Explicit receipt-artifact exclusions avoid self-referential whole-tree
+  fingerprints and can be pinned by verification policy.
+- `--gpu-proof-best-effort` as an explicit development escape hatch.
+- Python 3.13 CI, strict docs/package jobs, and enforced 100% line and branch
+  coverage.
+
+### Changed
+
+- The default fingerprint scope is the entire Git-tracked repository instead
+  of `src,tests`.
+- Receipt creation now fails pytest on Git, fingerprint, key, serialization, or
+  write errors; it also removes stale output at session start.
+- Schema-3 verification rejects dirty recording and verification trees by
+  default and accepts receipt commits only at the current commit or an ancestor.
+- Setup/teardown failures, missing terminal reports, comparison exceptions,
+  skipped tests, and overall session failure are represented and verified.
+- GPU metadata records all devices reported by `nvidia-smi`.
+- Array comparison is shape-safe, uses tolerance only for float/complex data,
+  and uses exact equality for other dtypes.
+- Receipt writes are atomic and strict JSON forbids NaN/non-JSON values.
+- Receipt generation rejects xdist workers; use separate shard processes.
+
+### Fixed
+
+- Carry-forward now recomputes the stored fingerprint algorithm and preserves
+  explicit generated/ignored shard inputs.
+- Signed identity and algorithm substitution are rejected.
+- Empty source scope, unmerged index entries, malformed policies, incomplete
+  collections, and stale success artifacts fail closed.
+
 ## [0.3.0] — 2026-08-08
 
 ### Added
