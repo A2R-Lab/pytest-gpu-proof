@@ -17,7 +17,6 @@ from .signers.ed25519 import (
     _public_key_fingerprint,
     find_verifying_github_key,
     public_key_algorithm,
-    verify_with_github_keys,
 )
 
 
@@ -32,6 +31,7 @@ _POLICY_KEYS = {
     "allowed_signers",
     "carried_max_age_days",
     "max_age_days",
+    "min_schema",
     "require_mode",
     "required_fingerprint_extra_paths",
     "required_fingerprint_excluded_paths",
@@ -97,6 +97,8 @@ def _load_policy(policy_path: Optional[str]) -> dict:
             raise VerificationError(
                 f"policy field {name!r} must be a non-negative integer"
             )
+    if "min_schema" in policy and policy["min_schema"] not in {1, 2, 3}:
+        raise VerificationError("policy field 'min_schema' must be 1, 2, or 3")
     if "require_mode" in policy and policy["require_mode"] not in {
         "local",
         "ci-gpu",
@@ -231,6 +233,10 @@ def _validate_structure(receipt: dict, schema: str) -> tuple[dict, dict, list]:
 def _verify_signature(receipt: dict, schema: str, override: Optional[str], policy: dict):
     sig = receipt.get("signature")
     if not sig:
+        if policy.get("signer_mode", "open") == "restricted":
+            raise VerificationError(
+                "repository policy restricts signers; unsigned receipts are not acceptable"
+            )
         return None, None, None
     if not isinstance(sig, dict) or not isinstance(sig.get("value"), str):
         raise VerificationError("signature.value is missing")
@@ -241,11 +247,15 @@ def _verify_signature(receipt: dict, schema: str, override: Optional[str], polic
 
     if schema == "3":
         signer = _require_dict(receipt, "signer")
-        username = override or signer.get("github_user")
+        username = signer.get("github_user")
         fingerprint = signer.get("key_fingerprint")
         algorithm = signer.get("algorithm")
         if not all(isinstance(value, str) and value for value in (username, fingerprint, algorithm)):
             raise VerificationError("schema-3 signer identity is incomplete")
+        if override and override != username:
+            raise VerificationError(
+                f"--github-user {override!r} does not match the signed identity @{username}"
+            )
         try:
             key = find_verifying_github_key(
                 _receipt_payload_without_sig(receipt), signature, username
@@ -260,17 +270,24 @@ def _verify_signature(receipt: dict, schema: str, override: Optional[str], polic
             raise VerificationError("signed algorithm does not match the verifying key")
     else:
         username = override or sig.get("signer") or receipt.get("repo", {}).get("github_username")
-        fingerprint = sig.get("key_fingerprint")
         if not isinstance(username, str) or not username:
             raise VerificationError("cannot determine legacy receipt signer")
         try:
-            ok = verify_with_github_keys(
+            key = find_verifying_github_key(
                 _receipt_payload_without_sig(receipt), signature, username
             )
         except _VerifierError as exc:
             raise VerificationError(str(exc)) from exc
-        if not ok:
+        if key is None:
             raise VerificationError(f"signature does not match a current GitHub key for @{username}")
+        # The policy-checked fingerprint must come from the key that actually
+        # verified, never from the unsigned envelope (which anyone can edit).
+        fingerprint = _public_key_fingerprint(key)
+        asserted = sig.get("key_fingerprint")
+        if isinstance(asserted, str) and asserted and asserted != fingerprint:
+            raise VerificationError(
+                "legacy signature.key_fingerprint does not match the verifying key"
+            )
 
     if policy.get("signer_mode", "open") == "restricted":
         users = set(policy.get("allowed_signers", []))
@@ -343,6 +360,11 @@ def _verify(
         raise VerificationError("schema-1 receipts cannot contain shards")
 
     policy = _load_policy(policy_path)
+    min_schema = policy.get("min_schema")
+    if min_schema is not None and int(schema) < min_schema:
+        raise VerificationError(
+            f"receipt schema {schema} is below the policy minimum of {min_schema}"
+        )
     toml = load_toml_defaults(root)
     repo, session, tests = _validate_structure(receipt, schema)
     signer = _verify_signature(receipt, schema, github_user_override, policy)
@@ -391,8 +413,18 @@ def _verify(
     print(f"[gpu-proof] Commit ancestry OK ({stored_sha[:12]}…)")
 
     allow_dirty = bool(policy.get("allow_dirty", schema in {"1", "2"}))
+    # The receipt under verification is expected to sit in the tree (untracked
+    # right after a run, or tracked-and-committed later); it must not count as
+    # dirt, mirroring the recording-side exclusion.
     try:
-        current_dirty = is_dirty(root, required=True)
+        receipt_rel = (
+            Path(receipt_path).resolve(strict=False).relative_to(Path(root).resolve()).as_posix()
+        )
+    except ValueError:
+        receipt_rel = None
+    dirty_exclusions = [receipt_rel] if receipt_rel else []
+    try:
+        current_dirty = is_dirty(root, required=True, exclude_paths=dirty_exclusions)
     except GitError as exc:
         raise VerificationError(str(exc)) from exc
     if not allow_dirty and (repo.get("dirty") or current_dirty):
@@ -447,7 +479,7 @@ def _verify(
     age = datetime.datetime.now(datetime.UTC) - ended
     if age < datetime.timedelta(minutes=-5):
         raise VerificationError("receipt timestamp is in the future")
-    if age.days > max_days:
+    if age > datetime.timedelta(days=max_days):
         raise VerificationError(f"receipt is older than the {max_days}-day policy")
     print(f"[gpu-proof] All {len(tests) - len(skipped)} executed test(s) passed")
     print("[gpu-proof] Receipt verified successfully.")
@@ -508,7 +540,7 @@ def _verify_shards(receipt: dict, root: str, policy: dict) -> None:
             limit = policy.get("carried_max_age_days", 30)
             if type(limit) is not int or limit < 0:
                 raise VerificationError("carried_max_age_days must be a non-negative integer")
-            if age < datetime.timedelta(minutes=-5) or age > datetime.timedelta(days=limit + 1):
+            if age < datetime.timedelta(minutes=-5) or age > datetime.timedelta(days=limit):
                 raise VerificationError(f"carried shard {name!r} is outside its age policy")
     if claimed != test_ids:
         raise VerificationError("shard membership does not exactly partition tests[]")

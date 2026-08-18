@@ -58,7 +58,14 @@ class GpuProofPlugin:
         try:
             output.unlink(missing_ok=True)
         except OSError as exc:
-            self._fail_or_warn(session, f"cannot clear stale receipt {output}: {exc}")
+            # An exitstatus write here would be overwritten by wrap_session;
+            # only UsageError reliably fails the run this early.
+            if self.gpu_proof_config.best_effort:
+                self._fail_or_warn(session, f"cannot clear stale receipt {output}: {exc}")
+            else:
+                raise pytest.UsageError(
+                    f"[gpu-proof] cannot clear stale receipt {output}: {exc}"
+                ) from exc
 
     def pytest_collection_finish(self, session):
         self.collected_node_ids = [

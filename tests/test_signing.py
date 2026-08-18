@@ -176,6 +176,52 @@ def test_encrypted_private_key_prompts(monkeypatch, tmp_path):
     assert calls == [None, b"secret"]
 
 
+def test_encrypted_key_valueerror_also_prompts(monkeypatch, tmp_path):
+    """cryptography >= 41 raises ValueError (not TypeError) for
+    passphrase-protected OpenSSH keys; the prompt fallback must cover both.
+    (Real encrypted-key round-trips need bcrypt, so this stays mocked.)"""
+    private_key = Ed25519PrivateKey.generate()
+    path = tmp_path / "encrypted"
+    path.write_bytes(b"encrypted-placeholder")
+
+    def load(data, password):
+        if password is None:
+            raise ValueError("Key is password-protected.")
+        assert password == b"secret"
+        return private_key
+
+    monkeypatch.setattr("pytest_gpu_proof.signers.ed25519.load_ssh_private_key", load)
+    monkeypatch.setattr("getpass.getpass", lambda prompt: "secret")
+    assert SSHSigner(str(path)).sign(b"x")
+
+
+def test_encrypted_key_without_terminal_fails_closed(monkeypatch, tmp_path):
+    path = tmp_path / "encrypted"
+    path.write_bytes(b"encrypted-placeholder")
+
+    def load(data, password):
+        raise ValueError("Key is password-protected.")
+
+    monkeypatch.setattr("pytest_gpu_proof.signers.ed25519.load_ssh_private_key", load)
+
+    def no_tty(prompt):
+        raise EOFError("no terminal")
+
+    monkeypatch.setattr("getpass.getpass", no_tty)
+    with pytest.raises(VerifierError, match="Could not load SSH private key"):
+        SSHSigner(str(path))
+
+    # Wrong passphrase also surfaces as the actionable signer error.
+    monkeypatch.setattr("getpass.getpass", lambda prompt: "wrong")
+    with pytest.raises(VerifierError, match="Could not load SSH private key"):
+        SSHSigner(str(path))
+
+
+def test_fetch_rejects_invalid_github_username():
+    with pytest.raises(VerifierError, match="invalid GitHub username"):
+        fetch_github_public_keys("../evil?path")
+
+
 def test_parse_and_fetch_github_keys(monkeypatch, ssh_key_file):
     _, private_key = ssh_key_file
     public_line = private_key.public_key().public_bytes(
@@ -192,7 +238,7 @@ def test_parse_and_fetch_github_keys(monkeypatch, ssh_key_file):
         def __exit__(self, *args):
             return False
 
-        def read(self):
+        def read(self, limit=None):
             return f"bad\n{public_line} comment\n".encode()
 
     monkeypatch.setattr("pytest_gpu_proof.signers.ed25519.urlopen", lambda *a, **k: Response())
@@ -218,7 +264,7 @@ def test_fetch_github_keys_errors(monkeypatch):
         def __exit__(self, *args):
             return False
 
-        def read(self):
+        def read(self, limit=None):
             return b"not-a-key\n"
 
     monkeypatch.setattr("pytest_gpu_proof.signers.ed25519.urlopen", lambda *a, **k: Empty())

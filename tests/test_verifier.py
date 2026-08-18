@@ -646,13 +646,15 @@ def test_legacy_signature_paths(tmp_path, tmp_git_repo, signer_with_key):
     receipt = finalize_receipt(payload, signer)
     path = tmp_path / "legacy.json"
     write_receipt(receipt, str(path))
-    with patch("pytest_gpu_proof.verify.verify_with_github_keys", return_value=True):
+    public_key = signer._public_key
+    with _mock_github_keys(public_key):
         _verify(str(path), None, str(tmp_git_repo), None, None)
-    with patch("pytest_gpu_proof.verify.verify_with_github_keys", return_value=False):
+    other_key = Ed25519PrivateKey.generate().public_key()
+    with _mock_github_keys(other_key):
         with pytest.raises(VerificationError, match="signature does not match"):
             _verify(str(path), None, str(tmp_git_repo), None, None)
     with patch(
-        "pytest_gpu_proof.verify.verify_with_github_keys",
+        "pytest_gpu_proof.verify.find_verifying_github_key",
         side_effect=VerifierError("network"),
     ), pytest.raises(VerificationError, match="network"):
         _verify(str(path), None, str(tmp_git_repo), None, None)
@@ -661,6 +663,153 @@ def test_legacy_signature_paths(tmp_path, tmp_git_repo, signer_with_key):
     path.write_text(json.dumps(receipt))
     with pytest.raises(VerificationError, match="determine legacy"):
         _verify(str(path), None, str(tmp_git_repo), None, None)
+
+
+def _legacy_receipt(tmp_path, tmp_git_repo, signer):
+    from pytest_gpu_proof.config import GpuProofConfig
+
+    os.chdir(tmp_git_repo)
+    config = GpuProofConfig(enabled=True, fingerprint_paths=["src", "tests"])
+    payload = build_receipt_payload(
+        config,
+        [
+            {
+                "node_id": "tests/test_add.py::test_add",
+                "outcome": "passed",
+                "duration_s": 0.01,
+                "checks": [],
+            }
+        ],
+        _utcstamp(), _utcstamp(),
+    )
+    payload["schema_version"] = "2"
+    receipt = finalize_receipt(payload, signer)
+    path = tmp_path / "legacy.json"
+    write_receipt(receipt, str(path))
+    return path, receipt
+
+
+def test_legacy_fingerprint_is_bound_to_the_verifying_key(
+    tmp_path, tmp_git_repo, signer_with_key
+):
+    """A spoofed signature.key_fingerprint (unsigned envelope) must not be
+    able to satisfy a restricted key allowlist — the policy check uses the
+    fingerprint of the key that actually verified."""
+    from pytest_gpu_proof.signers.ed25519 import _public_key_fingerprint
+
+    signer, public_key = signer_with_key
+    path, receipt = _legacy_receipt(tmp_path, tmp_git_repo, signer)
+    real_fp = _public_key_fingerprint(public_key)
+
+    # Honest receipt against a policy allowing the real key: passes.
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps({
+        "signer_mode": "restricted",
+        "allowed_key_fingerprints": [real_fp],
+        "allow_dirty": True,
+    }))
+    with _mock_github_keys(public_key):
+        _verify(str(path), str(policy), str(tmp_git_repo), None, None)
+
+    # Attacker pastes an allowed fingerprint into the unsigned envelope while
+    # signing with a different (non-allowlisted) key: rejected.
+    receipt["signature"]["key_fingerprint"] = "SHA256:allowed-but-spoofed"
+    path.write_text(json.dumps(receipt))
+    policy.write_text(json.dumps({
+        "signer_mode": "restricted",
+        "allowed_key_fingerprints": ["SHA256:allowed-but-spoofed"],
+        "allow_dirty": True,
+    }))
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError, match="does not match the verifying key"):
+            _verify(str(path), str(policy), str(tmp_git_repo), None, None)
+
+
+def test_restricted_policy_rejects_key_outside_allowlist(
+    tmp_path, tmp_git_repo, signer_with_key
+):
+    signer, public_key = signer_with_key
+    path, _ = _legacy_receipt(tmp_path, tmp_git_repo, signer)
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps({
+        "signer_mode": "restricted",
+        "allowed_key_fingerprints": ["SHA256:someone-else"],
+        "allow_dirty": True,
+    }))
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError, match="not allowed by repository policy"):
+            _verify(str(path), str(policy), str(tmp_git_repo), None, None)
+
+
+def test_restricted_policy_rejects_unsigned_receipt(
+    tmp_path, tmp_git_repo, signer_with_key
+):
+    signer, _ = signer_with_key
+    path = _make_receipt(tmp_path, tmp_git_repo, signer, sign=False)
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps({"signer_mode": "restricted", "allowed_signers": ["testuser"]}))
+    with pytest.raises(VerificationError, match="unsigned receipts are not acceptable"):
+        _verify(
+            str(path), str(policy), str(tmp_git_repo), None, None, allow_unsigned=True
+        )
+
+
+def test_min_schema_policy(tmp_path, tmp_git_repo, signer_with_key):
+    signer, public_key = signer_with_key
+    path, _ = _legacy_receipt(tmp_path, tmp_git_repo, signer)
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps({"min_schema": 3}))
+    with pytest.raises(VerificationError, match="below the policy minimum"):
+        _verify(str(path), str(policy), str(tmp_git_repo), None, None)
+
+    schema3 = _make_receipt(tmp_path, tmp_git_repo, signer)
+    with _mock_github_keys(public_key):
+        _verify(str(schema3), str(policy), str(tmp_git_repo), None, None)
+
+    policy.write_text(json.dumps({"min_schema": 4}))
+    with pytest.raises(VerificationError, match="must be 1, 2, or 3"):
+        _verify(str(schema3), str(policy), str(tmp_git_repo), None, None)
+
+
+def test_schema3_override_must_match_signed_identity(good_receipt, tmp_git_repo):
+    path, public_key = good_receipt
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError, match="does not match the signed identity"):
+            _verify(str(path), None, str(tmp_git_repo), "someone-else", None)
+
+
+def test_untracked_receipt_in_repo_does_not_fail_clean_tree_check(
+    tmp_path, tmp_git_repo, signer_with_key
+):
+    """The canonical flow — receipt lands untracked at the repo root right
+    after a run — must pass the schema-3 clean-tree verification gate."""
+    signer, public_key = signer_with_key
+    built = _make_receipt(tmp_path, tmp_git_repo, signer)
+    # The name must dodge the fixture's .git/info/exclude (*.json) so the
+    # receipt is genuinely visible to `git status` — as in real repos.
+    in_repo = tmp_git_repo / "gpu-proof.receipt"
+    in_repo.write_text(built.read_text())
+    with _mock_github_keys(public_key):
+        _verify(str(in_repo), None, str(tmp_git_repo), "testuser", None)
+    # Any OTHER untracked file still counts as dirt.
+    stray = tmp_git_repo / "stray.txt"
+    stray.write_text("dirt")
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError, match="clean recording"):
+            _verify(str(in_repo), None, str(tmp_git_repo), "testuser", None)
+
+
+def test_receipt_outside_repo_verifies_clean_tree(
+    tmp_path_factory, tmp_path, tmp_git_repo, signer_with_key
+):
+    """A receipt held outside the repo (e.g. a downloaded CI artifact) has no
+    dirty-scan exclusion to compute and the clean tree still verifies."""
+    signer, public_key = signer_with_key
+    built = _make_receipt(tmp_path, tmp_git_repo, signer)
+    outside = tmp_path_factory.mktemp("artifacts") / "gpu-proof.json"
+    outside.write_text(built.read_text())
+    with _mock_github_keys(public_key):
+        _verify(str(outside), None, str(tmp_git_repo), "testuser", None)
 
 
 def test_tree_and_git_failures_are_rejected(

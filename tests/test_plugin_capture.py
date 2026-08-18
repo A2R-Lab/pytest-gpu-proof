@@ -571,8 +571,20 @@ def test_sessionstart_unlink_failure_fails_closed(monkeypatch, tmp_path):
         "unlink",
         lambda *a, **k: (_ for _ in ()).throw(OSError("permission denied")),
     )
-    plugin.pytest_sessionstart(session)
-    assert session.exitstatus == pytest.ExitCode.TESTS_FAILED
+    # An exitstatus write at sessionstart would be overwritten by wrap_session,
+    # so failing closed this early must raise UsageError instead.
+    with pytest.raises(pytest.UsageError, match="cannot clear stale receipt"):
+        plugin.pytest_sessionstart(session)
+
+    plugin.gpu_proof_config = GpuProofConfig(
+        enabled=True,
+        output=str(tmp_path / "receipt.json"),
+        repo_root=str(tmp_path),
+        best_effort=True,
+    )
+    with pytest.warns(UserWarning, match="cannot clear stale receipt"):
+        plugin.pytest_sessionstart(session)
+    assert session.exitstatus == pytest.ExitCode.OK
 
 
 def test_report_defensive_paths():

@@ -107,8 +107,11 @@ def merge_payloads(receipts: List[dict], sources: List[str]) -> dict:
                 merged_shards.append(shard)
 
     sessions = [r.get("session", {}) for r in receipts]
-    started = min(s.get("started_at") for s in sessions)
-    ended = max(s.get("ended_at") for s in sessions)
+    for src, s in zip(sources, sessions):
+        if not isinstance(s.get("started_at"), str) or not isinstance(s.get("ended_at"), str):
+            raise MergeError(f"receipt {src} has no session timestamps")
+    started = min(s["started_at"] for s in sessions)
+    ended = max(s["ended_at"] for s in sessions)
 
     merged = dict(receipts[0])
     merged.pop("signature", None)

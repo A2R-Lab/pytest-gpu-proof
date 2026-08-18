@@ -30,7 +30,11 @@ def _regular_entry(entry: TrackedEntry, root: Path) -> dict:
         if entry.mode == "160000":
             from .gitutils import get_commit_sha
 
-            head = get_commit_sha(str(path)) if path.is_dir() else None
+            # Only trust rev-parse when the submodule is actually initialized
+            # there; on an empty checkout dir git would walk up and report the
+            # PARENT repo's HEAD.
+            initialized = path.is_dir() and (path / ".git").exists()
+            head = get_commit_sha(str(path)) if initialized else None
             return {"kind": "gitlink", "mode": entry.mode, "commit": head or entry.object_id}
         return {"kind": "file", "mode": entry.mode, "sha256": _sha256_bytes(path.read_bytes())}
     except OSError as exc:

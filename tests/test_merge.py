@@ -189,6 +189,12 @@ def test_merge_rejects_empty_unsupported_and_zero_tests():
     with pytest.raises(MergeError, match="zero tests"):
         merge_payloads([base], ["x"])
 
+    missing_stamp = dict(base)
+    missing_stamp["session"] = {"outcome": "passed"}
+    missing_stamp["tests"] = [{"node_id": "t::a", "outcome": "passed", "checks": []}]
+    with pytest.raises(MergeError, match="no session timestamps"):
+        merge_payloads([missing_stamp], ["x"])
+
 
 def test_merge_schema_and_mode_mismatch(tmp_path, tmp_git_repo, signer_with_key):
     signer, _, _ = signer_with_key

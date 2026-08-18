@@ -9,6 +9,7 @@ https://github.com/{username}.keys — no separate key distribution step needed.
 import base64
 import hashlib
 import os
+import re
 from pathlib import Path
 from typing import List, Optional
 from urllib.request import urlopen
@@ -115,11 +116,16 @@ def _parse_pubkey_line(line: str):
         return None
 
 
+_GITHUB_USERNAME_RE = re.compile(r"^[A-Za-z0-9](?:-?[A-Za-z0-9]){0,38}$")
+
+
 def fetch_github_public_keys(username: str) -> List:
+    if not _GITHUB_USERNAME_RE.match(username):
+        raise VerifierError(f"invalid GitHub username: {username!r}")
     url = f"https://github.com/{username}.keys"
     try:
         with urlopen(url, timeout=10) as resp:
-            content = resp.read().decode()
+            content = resp.read(1024 * 1024).decode()
     except Exception as e:
         raise VerifierError(
             f"Could not fetch public keys for GitHub user {username!r}: {e}"
@@ -171,10 +177,23 @@ class SSHSigner(SignerBase):
 
         try:
             self._private_key = load_ssh_private_key(key_data, password=None)
-        except TypeError:
-            import getpass
-            pw = getpass.getpass(f"Passphrase for {key_path}: ").encode()
-            self._private_key = load_ssh_private_key(key_data, password=pw)
+        except (TypeError, ValueError):
+            # cryptography signals a passphrase-protected key as TypeError or
+            # ValueError depending on version/format; prompt, but fail closed
+            # with an actionable message when no terminal is available or the
+            # key cannot be loaded.
+            try:
+                import getpass
+
+                pw = getpass.getpass(f"Passphrase for {key_path}: ").encode()
+                self._private_key = load_ssh_private_key(key_data, password=pw)
+            except Exception as exc:
+                raise VerifierError(
+                    f"Could not load SSH private key at {key_path}: {exc}. "
+                    "If the key is passphrase-protected and no terminal is "
+                    "available, use ssh-agent, an unencrypted key, or pass "
+                    "--gpu-proof-key=PATH to a usable key."
+                ) from exc
 
         self._public_key = self._private_key.public_key()
 

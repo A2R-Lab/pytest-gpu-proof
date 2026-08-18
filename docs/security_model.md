@@ -78,7 +78,18 @@ still matches. Freshness limits replay duration but no server-issued nonce is
 currently used.
 
 `allow_dirty: true`, long age limits, `--allow-skipped`, and
-`--allow-unsigned` weaken guarantees. Unsigned mode authenticates no signer.
+`--allow-unsigned` weaken guarantees. Unsigned mode authenticates no signer,
+and a `signer_mode: restricted` policy therefore refuses unsigned receipts
+regardless of `--allow-unsigned`. The receipt file under verification is
+itself excluded from the verification-tree dirty check (its integrity is
+protected by its signature, not by Git state), so the canonical
+run-then-verify flow works without gitignoring the receipt.
+
+Legacy schema-1/2 receipts remain verifiable for migration, with weaker
+identity binding: the signer username and key fingerprint are not part of the
+signed payload. The verifier compensates by deriving the policy-checked
+fingerprint from the key that actually verified the signature; pin
+`min_schema: 3` to refuse legacy receipts entirely once migration is done.
 
 ## Merge and carry-forward
 

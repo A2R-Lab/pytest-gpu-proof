@@ -35,6 +35,14 @@ allowed_key_fingerprints:
 
 If both lists are present, the username and key must both be allowed. Key
 fingerprints are useful for dedicated CI keys or explicit key rotation.
+The checked fingerprint is always derived from the key that actually verified
+the signature — never from the receipt's own (unsigned) envelope — so a
+legacy receipt cannot satisfy the allowlist by asserting a fingerprint.
+Restricted mode also rejects unsigned receipts even under `--allow-unsigned`.
+
+Legacy schema-1/2 receipts bind less identity into the signature than
+schema 3. Repositories that have finished migrating should pin
+`min_schema: 3` to refuse them outright.
 
 ## Full field reference
 
@@ -43,6 +51,7 @@ fingerprints are useful for dedicated CI keys or explicit key rotation.
 | `signer_mode` | `open` or `restricted` |
 | `allowed_signers` | GitHub usernames accepted in restricted mode |
 | `allowed_key_fingerprints` | SSH SHA-256 fingerprints accepted in restricted mode |
+| `min_schema` | Minimum acceptable receipt schema version (1, 2, or 3) |
 | `max_age_days` | Maximum age of the merged/session receipt |
 | `require_mode` | Required receipt mode: `local` or `ci-gpu` |
 | `allow_dirty` | Permit dirty recording or verification trees |

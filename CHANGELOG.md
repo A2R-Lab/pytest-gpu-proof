@@ -20,6 +20,7 @@ based on [Keep a Changelog](https://keepachangelog.com/); versions follow
 - Explicit receipt-artifact exclusions avoid self-referential whole-tree
   fingerprints and can be pinned by verification policy.
 - `--gpu-proof-best-effort` as an explicit development escape hatch.
+- `min_schema` policy field to refuse legacy schema-1/2 receipts.
 - Python 3.13 CI, strict docs/package jobs, and enforced 100% line and branch
   coverage.
 
@@ -38,6 +39,25 @@ based on [Keep a Changelog](https://keepachangelog.com/); versions follow
   and uses exact equality for other dtypes.
 - Receipt writes are atomic and strict JSON forbids NaN/non-JSON values.
 - Receipt generation rejects xdist workers; use separate shard processes.
+- Legacy schema-1/2 verification derives the policy-checked key fingerprint
+  from the key that actually verified the signature; an asserted
+  `signature.key_fingerprint` that disagrees is rejected.
+- `signer_mode: restricted` policies reject unsigned receipts even with
+  `--allow-unsigned`, and `--github-user` must match the signed schema-3
+  identity.
+- The receipt under verification is excluded from the verification-tree dirty
+  check, so an untracked just-generated receipt verifies without gitignoring.
+- Passphrase-protected SSH keys prompt correctly on current cryptography
+  releases (`ValueError` as well as `TypeError`) and fail closed with an
+  actionable message when no terminal is available.
+- Uninitialized submodule checkouts fingerprint their index gitlink commit
+  instead of accidentally recording the parent repository's HEAD.
+- Receipt/shard age limits are enforced to the exact day boundary.
+- GitHub usernames are validated before key fetches and key responses are
+  size-capped.
+- A stale receipt that cannot be cleared at session start raises a pytest
+  usage error (an exit-status write that early would be silently overwritten).
+- Merging receipts without session timestamps is refused with a clear error.
 
 ### Fixed
 

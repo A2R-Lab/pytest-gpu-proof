@@ -109,7 +109,13 @@ def test_gitlink_entries_use_checked_out_or_index_commit(tmp_git_repo, monkeypat
     sub.mkdir()
     entry = TrackedEntry("sub", "160000", "index-commit")
     monkeypatch.setattr("pytest_gpu_proof.gitutils.get_commit_sha", lambda root: "head-commit")
+    # An empty (uninitialized) submodule dir must NOT be rev-parsed: git would
+    # walk up and report the parent repo's HEAD. The index commit is truth.
+    assert fingerprint_module._regular_entry(entry, tmp_git_repo)["commit"] == "index-commit"
+    # An initialized submodule (".git" present) is read from its checkout.
+    (sub / ".git").write_text("gitdir: ../.git/modules/sub\n")
     assert fingerprint_module._regular_entry(entry, tmp_git_repo)["commit"] == "head-commit"
+    (sub / ".git").unlink()
     sub.rmdir()
     assert fingerprint_module._regular_entry(entry, tmp_git_repo)["commit"] == "index-commit"
 
