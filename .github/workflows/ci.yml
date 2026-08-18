@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -25,3 +25,44 @@ jobs:
 
       - name: Run test suite (CPU-only)
         run: python -m pytest tests/ -q
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package with dev extras
+        run: pip install -e ".[dev]"
+      - name: Enforce 100% line and branch coverage
+        run: |
+          coverage run -m pytest tests/ -q
+          coverage report --fail-under=100
+          coverage xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+  docs-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package with dev extras
+        run: pip install -e ".[dev]"
+      - name: Build documentation strictly
+        run: mkdocs build --strict
+      - name: Build and inspect distributions
+        run: |
+          python -m build
+          python -m twine check --strict dist/*
+      - name: Smoke-test the wheel
+        run: |
+          python -m venv /tmp/wheeltest
+          /tmp/wheeltest/bin/pip install -q dist/*.whl
+          /tmp/wheeltest/bin/gpu-proof --help
+          /tmp/wheeltest/bin/python -m pytest -p pytest_gpu_proof --version

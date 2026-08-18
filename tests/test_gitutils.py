@@ -9,7 +9,10 @@ while a moved pin is a real change.
 
 import subprocess
 
-from pytest_gpu_proof.gitutils import is_dirty
+import pytest
+
+from pytest_gpu_proof import gitutils
+from pytest_gpu_proof.gitutils import GitError, is_dirty
 
 
 def _git(*args, cwd):
@@ -67,3 +70,92 @@ def test_is_dirty_submodule_semantics(tmp_path, monkeypatch):
     (parent / "sub" / "f.txt").write_text("changed")
     _commit_all(parent / "sub", "advance pin")
     assert is_dirty() is True
+
+
+def test_git_metadata_helpers(tmp_git_repo):
+    assert gitutils.get_commit_sha(str(tmp_git_repo))
+    assert gitutils.get_branch(str(tmp_git_repo)) == "master"
+    assert gitutils.get_remote_url(str(tmp_git_repo)).endswith("testuser/example.git")
+    assert gitutils.get_github_username(str(tmp_git_repo)) == "testuser"
+    assert gitutils.extract_github_username("https://example.com/nope") is None
+    assert gitutils.get_tracked_files(["src"], str(tmp_git_repo)) == ["src/mymodule.py"]
+    gitutils.require_repository(str(tmp_git_repo))
+
+
+def test_git_failures_are_fail_closed(tmp_path, monkeypatch):
+    assert gitutils.get_commit_sha(str(tmp_path)) is None
+    assert gitutils.is_dirty(str(tmp_path)) is False
+    with pytest.raises(GitError, match="not inside"):
+        gitutils.require_repository(str(tmp_path))
+    with pytest.raises(GitError, match="git rev-parse"):
+        gitutils.get_commit_sha(str(tmp_path), required=True)
+    with pytest.raises(GitError, match="could not inspect"):
+        gitutils.is_dirty(str(tmp_path), required=True)
+    with pytest.raises(GitError, match="empty"):
+        gitutils.get_tracked_entries([], str(tmp_path))
+
+
+def test_gh_login_and_signing_key(monkeypatch, tmp_git_repo):
+    monkeypatch.setattr(
+        gitutils.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="alice\n", stderr=""),
+    )
+    assert gitutils.get_gh_cli_login() == "alice"
+
+    def missing(*args, **kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(gitutils.subprocess, "run", missing)
+    assert gitutils.get_gh_cli_login() is None
+
+
+def test_unmerged_index_entry_rejected(tmp_git_repo, monkeypatch):
+    output = b"100644 deadbeef 1\tconflicted.py\0"
+    monkeypatch.setattr(
+        gitutils.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=output, stderr=b""),
+    )
+    with pytest.raises(GitError, match="unmerged"):
+        gitutils.get_tracked_entries(["."], str(tmp_git_repo))
+
+
+def test_git_signing_key(tmp_git_repo):
+    _git("config", "user.signingKey", "~/keys/id_ed25519", cwd=tmp_git_repo)
+    assert gitutils.get_git_signing_key(str(tmp_git_repo)).endswith("keys/id_ed25519")
+
+
+def test_dirty_check_can_ignore_only_the_receipt_artifact(tmp_git_repo):
+    receipt = tmp_git_repo / "gpu-proof.json"
+    receipt.write_text("old\n")
+    _git("add", "-f", "gpu-proof.json", cwd=tmp_git_repo)
+    _git("commit", "-m", "receipt", cwd=tmp_git_repo)
+    receipt.write_text("new\n")
+    assert is_dirty(str(tmp_git_repo)) is True
+    assert is_dirty(
+        str(tmp_git_repo), exclude_paths=["gpu-proof.json"]
+    ) is False
+    (tmp_git_repo / "src" / "mymodule.py").write_text("changed\n")
+    assert is_dirty(
+        str(tmp_git_repo), exclude_paths=["gpu-proof.json"]
+    ) is True
+
+
+def test_dirty_rename_parsing(tmp_git_repo):
+    _git("mv", "src/mymodule.py", "src/renamed.py", cwd=tmp_git_repo)
+    assert is_dirty(
+        str(tmp_git_repo), exclude_paths=["src/mymodule.py", "src/renamed.py"]
+    ) is False
+    assert is_dirty(
+        str(tmp_git_repo), exclude_paths=["src/renamed.py"]
+    ) is True
+
+
+def test_dirty_parser_handles_truncated_rename(monkeypatch):
+    monkeypatch.setattr(
+        gitutils.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=b"R  new.py\0", stderr=b""),
+    )
+    assert is_dirty(".", exclude_paths=["new.py"]) is False

@@ -1,11 +1,15 @@
 # Roadmap
 
-- **PyPI publishing: infrastructure DONE 2026-07-07** — `publish.yml` (OIDC
-  trusted publishing: TestPyPI on manual dispatch, PyPI on GitHub release),
-  CHANGELOG.md, RELEASING.md, full metadata, wheel smoke-tested; name free on
-  PyPI. REMAINING (repo-owner web UI, ~5 min, steps in RELEASING.md): add the
-  pending trusted publishers on pypi.org + test.pypi.org and create the
-  `pypi`/`testpypi` GitHub environments — then dispatch the TestPyPI lane and
-  cut v0.1.0.
-- SSHSIG-compatible signing (`ssh-keygen -Y verify` interop; agent-only + FIDO keys).
-- CI-issued nonce / challenge mode for stronger replay protection.
+The current focus is a small, auditable receipt format and strict local-to-CI
+workflow. Candidate future work:
+
+- SSHSIG-compatible signing, SSH-agent signing, and hardware-backed keys;
+- optional verification of every input shard signature before merge;
+- CI-issued nonce/challenge mode for stronger replay resistance;
+- Sigstore/OIDC provenance for controlled CI-GPU runs;
+- archived signer-key evidence or transparency integration;
+- versioned JSON Schema publication and external conformance fixtures;
+- an explicit multi-machine merge model for heterogeneous GPU metadata.
+
+Hardware execution attestation is intentionally out of scope unless a concrete
+backend and verifier can support claims stronger than self-reported GPU data.

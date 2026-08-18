@@ -1,18 +1,6 @@
-"""
-Standalone receipt verifier.
+"""Strict, CPU-only verification of signed pytest GPU receipts."""
 
-Checks:
-  1. Signature — fetches signer's public keys from github.com/{username}.keys
-     (unsigned receipts are rejected unless allow_unsigned is set)
-  2. Fingerprint — recomputes and compares digest
-  3. Commit SHA — compares against current repo state
-  4. Test outcomes — all tests in receipt must have passed; skipped marked
-     tests are rejected unless allow_skipped is set, or an expected-skips
-     baseline is given and the receipt's skip set matches it EXACTLY
-  5. GPU info — optionally require environment.gpu_info (require_gpu)
-  6. Freshness — receipt must not be older than max_age_days
-  7. Dirty policy — reject dirty-tree receipts if policy requires clean
-"""
+from __future__ import annotations
 
 import base64
 import datetime
@@ -22,58 +10,148 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from .signers.ed25519 import verify_with_github_keys
+from .fingerprint import FingerprintError, recompute_fingerprint
+from .gitutils import GitError, get_commit_sha, is_dirty, require_repository
 from .signers.base import VerifierError as _VerifierError
+from .signers.ed25519 import (
+    _public_key_fingerprint,
+    find_verifying_github_key,
+    public_key_algorithm,
+)
 
 
 class VerificationError(Exception):
     pass
 
 
+_POLICY_KEYS = {
+    "allow_carried",
+    "allow_dirty",
+    "allowed_key_fingerprints",
+    "allowed_signers",
+    "carried_max_age_days",
+    "max_age_days",
+    "min_schema",
+    "require_mode",
+    "required_fingerprint_extra_paths",
+    "required_fingerprint_excluded_paths",
+    "required_fingerprint_paths",
+    "required_shard_fingerprints",
+    "required_test_manifest",
+    "signer_mode",
+}
+
+
 def _load_policy(policy_path: Optional[str]) -> dict:
     if not policy_path:
         return {}
-    text = Path(policy_path).read_text()
-    if policy_path.endswith(".json"):
-        return json.loads(text) or {}
+    path = Path(policy_path)
     try:
-        import yaml  # type: ignore
-    except ImportError:
-        raise VerificationError(
-            f"Policy file {policy_path!r} is YAML but PyYAML is not installed. "
-            "Install it with 'pip install pyyaml', or use a .json policy file."
-        )
-    return yaml.safe_load(text) or {}
+        text = path.read_text()
+        if path.suffix.lower() == ".json":
+            policy = json.loads(text)
+        else:
+            try:
+                import yaml  # type: ignore
+            except ImportError as exc:
+                raise VerificationError(
+                    "YAML policy requires the 'yaml' extra: pip install "
+                    "pytest-gpu-proof[yaml]"
+                ) from exc
+            policy = yaml.safe_load(text)
+    except VerificationError:
+        raise
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise VerificationError(f"cannot read policy {policy_path!r}: {exc}") from exc
+    if policy is None:
+        return {}
+    if not isinstance(policy, dict):
+        raise VerificationError("policy must be a JSON/YAML object")
+    unknown = sorted(set(policy) - _POLICY_KEYS)
+    if unknown:
+        raise VerificationError(f"unknown policy field(s): {', '.join(unknown)}")
+
+    def string_list(name: str) -> None:
+        value = policy.get(name)
+        if value is not None and (
+            not isinstance(value, list)
+            or not all(isinstance(item, str) and item for item in value)
+        ):
+            raise VerificationError(f"policy field {name!r} must be a list of strings")
+
+    for name in (
+        "allowed_key_fingerprints",
+        "allowed_signers",
+        "required_fingerprint_excluded_paths",
+        "required_fingerprint_extra_paths",
+        "required_fingerprint_paths",
+    ):
+        string_list(name)
+    for name in ("allow_carried", "allow_dirty"):
+        if name in policy and type(policy[name]) is not bool:
+            raise VerificationError(f"policy field {name!r} must be a boolean")
+    for name in ("carried_max_age_days", "max_age_days"):
+        if name in policy and (
+            type(policy[name]) is not int or policy[name] < 0
+        ):
+            raise VerificationError(
+                f"policy field {name!r} must be a non-negative integer"
+            )
+    if "min_schema" in policy and policy["min_schema"] not in {1, 2, 3}:
+        raise VerificationError("policy field 'min_schema' must be 1, 2, or 3")
+    if "require_mode" in policy and policy["require_mode"] not in {
+        "local",
+        "ci-gpu",
+    }:
+        raise VerificationError("policy field 'require_mode' must be 'local' or 'ci-gpu'")
+    if "required_test_manifest" in policy and not isinstance(
+        policy["required_test_manifest"], str
+    ):
+        raise VerificationError("policy field 'required_test_manifest' must be a path string")
+    shard_policy = policy.get("required_shard_fingerprints")
+    if shard_policy is not None:
+        if not isinstance(shard_policy, dict):
+            raise VerificationError("required_shard_fingerprints must be an object")
+        for name, scope in shard_policy.items():
+            if not isinstance(name, str) or not isinstance(scope, dict):
+                raise VerificationError("each required shard scope must be an object")
+            unknown_scope = set(scope) - {"paths", "extra_paths", "excluded_paths"}
+            if unknown_scope:
+                raise VerificationError(f"shard {name!r} has unknown policy fields")
+            for field in ("paths", "extra_paths", "excluded_paths"):
+                value = scope.get(field, [])
+                if not isinstance(value, list) or not all(
+                    isinstance(item, str) and item for item in value
+                ):
+                    raise VerificationError(
+                        f"shard {name!r} field {field!r} must be a list of strings"
+                    )
+    mode = policy.get("signer_mode", "open")
+    if mode not in {"open", "restricted"}:
+        raise VerificationError("signer_mode must be 'open' or 'restricted'")
+    if mode == "restricted" and not (
+        policy.get("allowed_signers") or policy.get("allowed_key_fingerprints")
+    ):
+        raise VerificationError("restricted signer policy has no allowlist")
+    return policy
 
 
-def _load_expected_skips(path: str) -> set:
-    """Baseline file: one node ID per line; blank lines and '#' comments ignored."""
-    lines = Path(path).read_text().splitlines()
-    entries = set()
-    for line in lines:
-        line = line.strip()
-        if line and not line.startswith("#"):
-            entries.add(line)
-    return entries
+def _load_node_ids(path: Path) -> set[str]:
+    try:
+        lines = path.read_text().splitlines()
+    except OSError as exc:
+        raise VerificationError(f"cannot read node-id manifest {path}: {exc}") from exc
+    return {
+        line.strip()
+        for line in lines
+        if line.strip() and not line.lstrip().startswith("#")
+    }
 
 
 def _receipt_payload_without_sig(receipt: dict) -> bytes:
     from .receipt import canonicalize
-    payload = {k: v for k, v in receipt.items() if k != "signature"}
-    return canonicalize(payload)
 
-
-def _git(repo_root: str, *args: str) -> Optional[str]:
-    try:
-        result = subprocess.run(
-            ["git", "-C", repo_root, *args],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return result.stdout.strip() or None
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return None
+    return canonicalize({key: value for key, value in receipt.items() if key != "signature"})
 
 
 def _is_ancestor(repo_root: str, ancestor_sha: str, descendant_sha: str) -> bool:
@@ -84,9 +162,141 @@ def _is_ancestor(repo_root: str, ancestor_sha: str, descendant_sha: str) -> bool
             text=True,
             check=True,
         )
-        return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
+    return True
+
+
+def _require_dict(container: dict, key: str) -> dict:
+    value = container.get(key)
+    if not isinstance(value, dict):
+        raise VerificationError(f"receipt field {key!r} must be an object")
+    return value
+
+
+def _parse_time(value, field: str) -> datetime.datetime:
+    if not isinstance(value, str):
+        raise VerificationError(f"{field} is missing or is not a UTC timestamp")
+    try:
+        return datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=datetime.UTC
+        )
+    except ValueError as exc:
+        raise VerificationError(f"{field} is not a valid UTC timestamp: {value!r}") from exc
+
+
+def _validate_structure(receipt: dict, schema: str) -> tuple[dict, dict, list]:
+    repo = _require_dict(receipt, "repo")
+    session = _require_dict(receipt, "session")
+    _require_dict(receipt, "fingerprint")
+    _require_dict(receipt, "environment")
+    if receipt.get("mode") not in {"local", "ci-gpu"}:
+        raise VerificationError("receipt mode is missing or invalid")
+    if not isinstance(repo.get("commit_sha"), str) or not repo["commit_sha"]:
+        raise VerificationError("receipt repo.commit_sha is missing")
+    tests = receipt.get("tests")
+    if not isinstance(tests, list) or not tests:
+        raise VerificationError("receipt contains no test results")
+    node_ids = []
+    for index, test in enumerate(tests):
+        if not isinstance(test, dict) or not isinstance(test.get("node_id"), str):
+            raise VerificationError(f"tests[{index}] has no valid node_id")
+        node_ids.append(test["node_id"])
+        if test.get("outcome") not in {"passed", "failed", "error", "skipped"}:
+            raise VerificationError(f"tests[{index}] has an invalid outcome")
+        checks = test.get("checks", [])
+        if not isinstance(checks, list):
+            raise VerificationError(f"tests[{index}].checks must be a list")
+        for check_index, check in enumerate(checks):
+            if not isinstance(check, dict) or check.get("outcome") not in {
+                "passed",
+                "failed",
+                "error",
+            }:
+                raise VerificationError(
+                    f"tests[{index}].checks[{check_index}] is invalid"
+                )
+    if len(node_ids) != len(set(node_ids)):
+        raise VerificationError("receipt contains duplicate test node IDs")
+    recorded = session.get("node_ids")
+    if not isinstance(recorded, list) or recorded != node_ids:
+        raise VerificationError("session.node_ids does not exactly match tests[]")
+    started = _parse_time(session.get("started_at"), "session.started_at")
+    ended = _parse_time(session.get("ended_at"), "session.ended_at")
+    if ended < started:
+        raise VerificationError("session.ended_at precedes session.started_at")
+    if schema == "3" and session.get("outcome") not in {"passed", "failed"}:
+        raise VerificationError("schema-3 session.outcome is missing or invalid")
+    return repo, session, tests
+
+
+def _verify_signature(receipt: dict, schema: str, override: Optional[str], policy: dict):
+    sig = receipt.get("signature")
+    if not sig:
+        if policy.get("signer_mode", "open") == "restricted":
+            raise VerificationError(
+                "repository policy restricts signers; unsigned receipts are not acceptable"
+            )
+        return None, None, None
+    if not isinstance(sig, dict) or not isinstance(sig.get("value"), str):
+        raise VerificationError("signature.value is missing")
+    try:
+        signature = base64.b64decode(sig["value"], validate=True)
+    except ValueError as exc:
+        raise VerificationError("signature.value is not valid base64") from exc
+
+    if schema == "3":
+        signer = _require_dict(receipt, "signer")
+        username = signer.get("github_user")
+        fingerprint = signer.get("key_fingerprint")
+        algorithm = signer.get("algorithm")
+        if not all(isinstance(value, str) and value for value in (username, fingerprint, algorithm)):
+            raise VerificationError("schema-3 signer identity is incomplete")
+        if override and override != username:
+            raise VerificationError(
+                f"--github-user {override!r} does not match the signed identity @{username}"
+            )
+        try:
+            key = find_verifying_github_key(
+                _receipt_payload_without_sig(receipt), signature, username
+            )
+        except _VerifierError as exc:
+            raise VerificationError(str(exc)) from exc
+        if key is None:
+            raise VerificationError(f"signature does not match a current GitHub key for @{username}")
+        if _public_key_fingerprint(key) != fingerprint:
+            raise VerificationError("signed key_fingerprint does not match the verifying key")
+        if public_key_algorithm(key) != algorithm:
+            raise VerificationError("signed algorithm does not match the verifying key")
+    else:
+        username = override or sig.get("signer") or receipt.get("repo", {}).get("github_username")
+        if not isinstance(username, str) or not username:
+            raise VerificationError("cannot determine legacy receipt signer")
+        try:
+            key = find_verifying_github_key(
+                _receipt_payload_without_sig(receipt), signature, username
+            )
+        except _VerifierError as exc:
+            raise VerificationError(str(exc)) from exc
+        if key is None:
+            raise VerificationError(f"signature does not match a current GitHub key for @{username}")
+        # The policy-checked fingerprint must come from the key that actually
+        # verified, never from the unsigned envelope (which anyone can edit).
+        fingerprint = _public_key_fingerprint(key)
+        asserted = sig.get("key_fingerprint")
+        if isinstance(asserted, str) and asserted and asserted != fingerprint:
+            raise VerificationError(
+                "legacy signature.key_fingerprint does not match the verifying key"
+            )
+
+    if policy.get("signer_mode", "open") == "restricted":
+        users = set(policy.get("allowed_signers", []))
+        fingerprints = set(policy.get("allowed_key_fingerprints", []))
+        if users and username not in users:
+            raise VerificationError(f"signer @{username} is not allowed by repository policy")
+        if fingerprints and fingerprint not in fingerprints:
+            raise VerificationError("signing key is not allowed by repository policy")
+    return username, fingerprint, schema
 
 
 def verify_receipt(
@@ -112,10 +322,10 @@ def verify_receipt(
             require_gpu=require_gpu,
             expected_skips_path=expected_skips_path,
         )
-        return True
-    except VerificationError as e:
-        print(f"[gpu-proof] FAIL: {e}", file=sys.stderr)
+    except VerificationError as exc:
+        print(f"[gpu-proof] FAIL: {exc}", file=sys.stderr)
         return False
+    return True
 
 
 def _verify(
@@ -131,282 +341,208 @@ def _verify(
 ):
     from .config import load_toml_defaults
 
-    toml_cfg = load_toml_defaults(repo_root)
-
-    # --- load receipt ---
-    receipt_text = Path(receipt_path).read_text()
-    receipt = json.loads(receipt_text)
-
-    schema = receipt.get("schema_version")
-    if schema not in ("1", "2"):
-        raise VerificationError(f"Unknown schema_version: {schema!r}")
+    root = str(Path(repo_root).resolve())
+    try:
+        require_repository(root)
+        current_sha = get_commit_sha(root, required=True)
+    except GitError as exc:
+        raise VerificationError(str(exc)) from exc
+    try:
+        receipt = json.loads(Path(receipt_path).read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise VerificationError(f"cannot read receipt {receipt_path!r}: {exc}") from exc
+    if not isinstance(receipt, dict):
+        raise VerificationError("receipt must be a JSON object")
+    schema = str(receipt.get("schema_version"))
+    if schema not in {"1", "2", "3"}:
+        raise VerificationError(f"unknown schema_version: {schema!r}")
     if schema == "1" and "shards" in receipt:
-        raise VerificationError(
-            "schema '1' receipts must not carry a shards block (sharded receipts "
-            "are schema '2')"
-        )
+        raise VerificationError("schema-1 receipts cannot contain shards")
 
-    sig_block = receipt.get("signature")
-    if not sig_block:
+    policy = _load_policy(policy_path)
+    min_schema = policy.get("min_schema")
+    if min_schema is not None and int(schema) < min_schema:
+        raise VerificationError(
+            f"receipt schema {schema} is below the policy minimum of {min_schema}"
+        )
+    toml = load_toml_defaults(root)
+    repo, session, tests = _validate_structure(receipt, schema)
+    signer = _verify_signature(receipt, schema, github_user_override, policy)
+    if not receipt.get("signature"):
         if not allow_unsigned:
-            raise VerificationError(
-                "Receipt is UNSIGNED (no signature block). Unsigned receipts prove "
-                "nothing about who ran the tests. Pass --allow-unsigned only if you "
-                "explicitly accept that."
-            )
-        print(
-            "[gpu-proof] WARNING: receipt is UNSIGNED and --allow-unsigned was passed.\n"
-            "[gpu-proof] WARNING: signature verification SKIPPED — this receipt proves\n"
-            "[gpu-proof] WARNING: nothing about who ran the tests or on what machine."
-        )
+            raise VerificationError("receipt is unsigned")
+        print("[gpu-proof] WARNING: accepting an unsigned receipt")
     else:
-        sig_b64 = sig_block.get("value", "")
-        if not sig_b64:
-            raise VerificationError("Signature value is missing")
+        print(f"[gpu-proof] Signature valid (signer: @{signer[0]})")
 
-        try:
-            signature = base64.b64decode(sig_b64)
-        except Exception:
-            raise VerificationError("Signature value is not valid base64")
-
-        # --- verify signature via GitHub public keys ---
-        github_username = (
-            github_user_override
-            or sig_block.get("signer")
-            or receipt.get("repo", {}).get("github_username")
-        )
-        if not github_username:
-            raise VerificationError(
-                "Cannot determine GitHub username. Pass --github-user=USERNAME."
-            )
-
-        payload_bytes = _receipt_payload_without_sig(receipt)
-
-        print(f"[gpu-proof] Fetching public keys for @{github_username} …")
-        try:
-            ok = verify_with_github_keys(payload_bytes, signature, github_username)
-        except _VerifierError as e:
-            raise VerificationError(str(e))
-
-        if not ok:
-            raise VerificationError(
-                f"Signature does not match any SSH key registered by @{github_username} on GitHub"
-            )
-        print(f"[gpu-proof] Signature valid (signer: @{github_username})")
-
-    # --- recompute fingerprint ---
-    repo = receipt.get("repo", {})
-    stored_fp = receipt.get("fingerprint", {})
-    fp_paths = stored_fp.get("included_paths", ["src", "tests"])
-
-    from .fingerprint import compute_fingerprint  # noqa: PLC0415 (local import ok here)
-
-    current_fp = compute_fingerprint(fp_paths, root=repo_root)
-    stored_digest = stored_fp.get("digest")
-    if not stored_digest:
-        raise VerificationError("Receipt fingerprint block is missing its digest")
-    if current_fp["digest"] != stored_digest:
+    required_mode = policy.get("require_mode")
+    if required_mode is not None and receipt.get("mode") != required_mode:
         raise VerificationError(
-            f"Fingerprint mismatch: stored={stored_digest[:12]}… "
-            f"current={current_fp['digest'][:12]}…\n"
-            "The code under src/ or tests/ has changed since the receipt was generated."
+            f"receipt mode {receipt.get('mode')!r} does not match required mode {required_mode!r}"
         )
+
+    stored_fp = receipt["fingerprint"]
+    if (
+        not isinstance(stored_fp.get("digest"), str)
+        or type(stored_fp.get("file_count")) is not int
+        or stored_fp["file_count"] <= 0
+    ):
+        raise VerificationError("receipt fingerprint is empty or missing its digest")
+    required_paths = policy.get("required_fingerprint_paths")
+    if required_paths is not None and sorted(stored_fp.get("included_paths", [])) != sorted(required_paths):
+        raise VerificationError("receipt fingerprint paths do not match repository policy")
+    required_extras = policy.get("required_fingerprint_extra_paths")
+    if required_extras is not None and sorted(stored_fp.get("extra_paths", [])) != sorted(required_extras):
+        raise VerificationError("receipt fingerprint extra paths do not match repository policy")
+    required_excluded = policy.get("required_fingerprint_excluded_paths")
+    if required_excluded is not None and sorted(
+        stored_fp.get("excluded_paths", [])
+    ) != sorted(required_excluded):
+        raise VerificationError("receipt fingerprint exclusions do not match repository policy")
+    try:
+        current_fp = recompute_fingerprint(stored_fp, root)
+    except FingerprintError as exc:
+        raise VerificationError(str(exc)) from exc
+    if current_fp["digest"] != stored_fp["digest"] or current_fp["file_count"] != stored_fp["file_count"]:
+        raise VerificationError("source fingerprint does not match the checked-out tree")
     print(f"[gpu-proof] Fingerprint OK ({current_fp['digest'][:12]}…)")
 
-    # --- commit SHA check ---
-    current_sha = _git(repo_root, "rev-parse", "HEAD")
-    stored_sha = repo.get("commit_sha")
-    if (
-        current_sha
-        and stored_sha
-        and current_sha != stored_sha
-        and not _is_ancestor(repo_root, stored_sha, current_sha)
-    ):
-        raise VerificationError(
-            f"Commit SHA mismatch: receipt={stored_sha[:12]}  current={current_sha[:12]}"
+    stored_sha = repo["commit_sha"]
+    if stored_sha != current_sha and not _is_ancestor(root, stored_sha, current_sha):
+        raise VerificationError("receipt commit is not the current commit or an ancestor")
+    print(f"[gpu-proof] Commit ancestry OK ({stored_sha[:12]}…)")
+
+    allow_dirty = bool(policy.get("allow_dirty", schema in {"1", "2"}))
+    # The receipt under verification is expected to sit in the tree (untracked
+    # right after a run, or tracked-and-committed later); it must not count as
+    # dirt, mirroring the recording-side exclusion.
+    try:
+        receipt_rel = (
+            Path(receipt_path).resolve(strict=False).relative_to(Path(root).resolve()).as_posix()
         )
-    if current_sha and stored_sha and current_sha != stored_sha:
-        print(
-            f"[gpu-proof] Commit SHA OK ({stored_sha[:12]}… ancestor of {current_sha[:12]}…)"
-        )
-    elif stored_sha:
-        print(f"[gpu-proof] Commit SHA OK ({stored_sha[:12]}…)")
+    except ValueError:
+        receipt_rel = None
+    dirty_exclusions = [receipt_rel] if receipt_rel else []
+    try:
+        current_dirty = is_dirty(root, required=True, exclude_paths=dirty_exclusions)
+    except GitError as exc:
+        raise VerificationError(str(exc)) from exc
+    if not allow_dirty and (repo.get("dirty") or current_dirty):
+        raise VerificationError("repository policy requires clean recording and verification trees")
 
-    # --- dirty repo policy ---
-    policy = _load_policy(policy_path)
-    allow_dirty = policy.get("allow_dirty", True)
-    if repo.get("dirty") and not allow_dirty:
-        raise VerificationError(
-            "Receipt was generated from a dirty repository and policy requires a clean tree"
-        )
+    if schema in {"2", "3"} and "shards" in receipt:
+        _verify_shards(receipt, root, policy)
 
-    # --- schema 2: per-shard fingerprints + carried-shard policy ---
-    if schema == "2":
-        shards = receipt.get("shards")
-        if not shards or not isinstance(shards, list):
-            raise VerificationError("schema '2' receipt has no shards block")
-        test_ids = {t.get("node_id") for t in receipt.get("tests", [])}
-        claimed: set = set()
-        for shard in shards:
-            name = shard.get("name") or "<unnamed>"
-            ids = set(shard.get("node_ids", []))
-            overlap = claimed & ids
-            if overlap:
-                raise VerificationError(
-                    f"shard {name!r} re-claims node id(s) already claimed by an "
-                    f"earlier shard (e.g. {sorted(overlap)[0]!r})"
-                )
-            claimed |= ids
-            # Each shard's NARROW fingerprint must recompute clean at the
-            # current tree — for carried shards this is exactly the soundness
-            # condition: the inputs that shard proved are unchanged.
-            sfp = shard.get("fingerprint", {})
-            sdigest = sfp.get("digest")
-            spaths = sfp.get("included_paths")
-            if not sdigest or not spaths:
-                raise VerificationError(f"shard {name!r} has no fingerprint")
-            snow = compute_fingerprint(spaths, root=repo_root)
-            if snow["digest"] != sdigest:
-                raise VerificationError(
-                    f"shard {name!r} fingerprint mismatch: stored={sdigest[:12]}… "
-                    f"current={snow['digest'][:12]}… — its inputs changed; "
-                    f"re-run that shard."
-                )
-            carried = shard.get("carried")
-            if carried:
-                if not policy.get("allow_carried", False):
-                    raise VerificationError(
-                        f"shard {name!r} is CARRIED from an earlier receipt and "
-                        f"the policy does not set allow_carried: true. Carried "
-                        f"shards attest a PRIOR run whose inputs are unchanged — "
-                        f"opt in explicitly or re-run the shard."
-                    )
-                carried_max = int(policy.get("carried_max_age_days", 30))
-                orig_end = carried.get("original_ended_at")
-                if not orig_end:
-                    raise VerificationError(
-                        f"carried shard {name!r} has no original_ended_at")
-                ended = datetime.datetime.strptime(
-                    orig_end, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.UTC)
-                age = (datetime.datetime.now(datetime.UTC) - ended).days
-                if age > carried_max:
-                    raise VerificationError(
-                        f"carried shard {name!r} is {age} day(s) old "
-                        f"(carried_max_age_days: {carried_max}) — re-run it."
-                    )
-                print(f"[gpu-proof] shard {name!r}: CARRIED "
-                      f"(from {str(carried.get('original_commit_sha'))[:12]}, "
-                      f"{age}d old, fingerprint clean) — policy allows")
-            else:
-                print(f"[gpu-proof] shard {name!r}: fingerprint OK "
-                      f"({sdigest[:12]}…, {len(ids)} test(s))")
-        if claimed != test_ids:
-            orphans = sorted(test_ids - claimed)[:3]
-            unmatched = sorted(claimed - test_ids)[:3]
-            raise VerificationError(
-                f"shard membership does not partition tests[]: "
-                f"unclaimed={orphans} claimed-but-absent={unmatched}"
-            )
-
-    # --- test outcomes ---
-    tests = receipt.get("tests", [])
-    if not tests:
-        raise VerificationError("Receipt contains no test results")
-
-    failed = [
-        t["node_id"] for t in tests if t.get("outcome") not in ("passed", "skipped")
-    ]
+    failed = [test["node_id"] for test in tests if test.get("outcome") not in {"passed", "skipped"}]
+    if schema == "3" and session.get("outcome") != "passed":
+        raise VerificationError("recorded pytest session did not pass")
     if failed:
-        raise VerificationError(
-            f"{len(failed)} test(s) did not pass: {', '.join(failed)}"
-        )
-    skipped = [t["node_id"] for t in tests if t.get("outcome") == "skipped"]
+        raise VerificationError(f"{len(failed)} recorded test(s) did not pass")
+    for test in tests:
+        bad_checks = [check for check in test.get("checks", []) if check.get("outcome") != "passed"]
+        if bad_checks:
+            raise VerificationError(f"test {test['node_id']!r} contains a failed comparison check")
 
-    # Expected-skips baseline: the receipt's skip set must match EXACTLY.
-    # Stricter than --allow-skipped (which accepts ANY skips): new skips fail,
-    # and a baselined test that now runs flags the baseline as stale.
-    expected_skips = None
+    skipped = {test["node_id"] for test in tests if test.get("outcome") == "skipped"}
+    if expected_skips_path is not None and allow_skipped:
+        raise VerificationError("--expected-skips and --allow-skipped are mutually exclusive")
     if expected_skips_path is not None:
-        if allow_skipped:
-            raise VerificationError(
-                "--expected-skips and --allow-skipped are mutually exclusive: "
-                "the baseline already defines exactly which skips are acceptable."
-            )
-        expected_skips = _load_expected_skips(expected_skips_path)
-    elif not allow_skipped and toml_cfg.get("expected_skips"):
-        expected_skips = set(toml_cfg["expected_skips"])
-
-    if expected_skips is not None:
-        got = set(skipped)
-        unexpected = sorted(got - expected_skips)
-        stale = sorted(expected_skips - got)
-        problems = []
-        if unexpected:
-            problems.append(
-                f"{len(unexpected)} skip(s) NOT in the baseline: {', '.join(unexpected)}"
-            )
-        if stale:
-            problems.append(
-                f"{len(stale)} baseline entr(y/ies) that did NOT skip (stale "
-                f"baseline — update it): {', '.join(stale)}"
-            )
-        if problems:
-            raise VerificationError(
-                "Skipped tests do not match the expected-skips baseline. "
-                + " | ".join(problems)
-            )
-        print(
-            f"[gpu-proof] Skipped tests match the expected baseline "
-            f"({len(expected_skips)} pinned skip(s))"
-        )
-    elif skipped and not allow_skipped:
-        raise VerificationError(
-            f"{len(skipped)} marked test(s) were skipped: {', '.join(skipped)}. "
-            "Skipped tests prove nothing; pass --allow-skipped to accept them, "
-            "or pin them with --expected-skips BASELINE_FILE."
-        )
-    elif skipped:
-        print(
-            f"[gpu-proof] WARNING: {len(skipped)} skipped test(s) accepted "
-            "(--allow-skipped)"
-        )
-    print(f"[gpu-proof] All {len(tests) - len(skipped)} executed test(s) passed")
-
-    # --- gpu_info policy (modest hardening, not proof) ---
-    if require_gpu is None:
-        require_gpu = bool(toml_cfg.get("require_gpu", False))
-    if require_gpu:
-        gpu_info = (receipt.get("environment") or {}).get("gpu_info")
-        if not gpu_info:
-            raise VerificationError(
-                "Receipt's environment.gpu_info is missing/null but the policy "
-                "requires GPU info (--require-gpu). The recording machine had no "
-                "visible GPU (or nvidia-smi failed)."
-            )
-        print(f"[gpu-proof] GPU info present ({gpu_info.get('name')})")
-
-    # --- freshness ---
-    if max_age_days_override is not None:
-        max_days = max_age_days_override
-    elif policy.get("max_age_days") is not None:
-        max_days = policy["max_age_days"]
-    elif toml_cfg.get("max_age_days") is not None:
-        max_days = toml_cfg["max_age_days"]
+        expected = _load_node_ids(Path(expected_skips_path))
+    elif not allow_skipped and toml.get("expected_skips"):
+        expected = set(toml["expected_skips"])
     else:
-        max_days = 30
-    signed_at_str = receipt.get("session", {}).get("ended_at")
-    if signed_at_str:
-        try:
-            signed_at = datetime.datetime.strptime(
-                signed_at_str, "%Y-%m-%dT%H:%M:%SZ"
-            ).replace(tzinfo=datetime.UTC)
-            age = (datetime.datetime.now(datetime.UTC) - signed_at).days
-            if age > max_days:
-                raise VerificationError(
-                    f"Receipt is {age} days old; policy allows max {max_days} days"
-                )
-            print(f"[gpu-proof] Freshness OK (age: {age} day(s), limit: {max_days})")
-        except ValueError:
-            pass
+        expected = None
+    if expected is not None and skipped != expected:
+        raise VerificationError("recorded skip set does not exactly match the expected baseline")
+    if skipped and expected is None and not allow_skipped:
+        raise VerificationError(f"{len(skipped)} marked test(s) were skipped")
 
-    print(f"[gpu-proof] Receipt verified successfully.")
+    manifest = policy.get("required_test_manifest")
+    if manifest:
+        required_tests = _load_node_ids(Path(root) / manifest)
+        if set(session["node_ids"]) != required_tests:
+            raise VerificationError("recorded tests do not match the repository test manifest")
+
+    if require_gpu is None:
+        require_gpu = bool(toml.get("require_gpu", False))
+    if require_gpu and not (receipt.get("environment") or {}).get("gpu_info"):
+        raise VerificationError("repository policy requires recorded GPU information")
+
+    max_days = (
+        max_age_days_override
+        if max_age_days_override is not None
+        else policy.get("max_age_days", toml.get("max_age_days", 30))
+    )
+    if type(max_days) is not int or max_days < 0:
+        raise VerificationError("max_age_days must be a non-negative integer")
+    ended = _parse_time(session.get("ended_at"), "session.ended_at")
+    age = datetime.datetime.now(datetime.UTC) - ended
+    if age < datetime.timedelta(minutes=-5):
+        raise VerificationError("receipt timestamp is in the future")
+    if age > datetime.timedelta(days=max_days):
+        raise VerificationError(f"receipt is older than the {max_days}-day policy")
+    print(f"[gpu-proof] All {len(tests) - len(skipped)} executed test(s) passed")
+    print("[gpu-proof] Receipt verified successfully.")
+
+
+def _verify_shards(receipt: dict, root: str, policy: dict) -> None:
+    shards = receipt.get("shards")
+    if not isinstance(shards, list) or not shards:
+        raise VerificationError("sharded receipt has no shards")
+    test_ids = [test["node_id"] for test in receipt["tests"]]
+    claimed: list[str] = []
+    names: set[str] = set()
+    required = policy.get("required_shard_fingerprints", {})
+    for shard in shards:
+        if not isinstance(shard, dict) or not isinstance(shard.get("name"), str):
+            raise VerificationError("shard entry has no valid name")
+        name = shard["name"]
+        if name in names:
+            raise VerificationError(f"duplicate shard name: {name!r}")
+        names.add(name)
+        ids = shard.get("node_ids")
+        if not isinstance(ids, list) or len(ids) != len(set(ids)):
+            raise VerificationError(f"shard {name!r} has invalid node_ids")
+        if set(claimed) & set(ids):
+            raise VerificationError(f"shard {name!r} overlaps another shard")
+        claimed.extend(ids)
+        fingerprint = shard.get("fingerprint")
+        if not isinstance(fingerprint, dict):
+            raise VerificationError(f"shard {name!r} has no fingerprint")
+        if name in required:
+            expected = required[name]
+            if "paths" in expected and sorted(
+                fingerprint.get("included_paths", [])
+            ) != sorted(expected["paths"]):
+                raise VerificationError(f"shard {name!r} paths do not match policy")
+            if "extra_paths" in expected and sorted(
+                fingerprint.get("extra_paths", [])
+            ) != sorted(expected["extra_paths"]):
+                raise VerificationError(f"shard {name!r} extra paths do not match policy")
+            if "excluded_paths" in expected and sorted(
+                fingerprint.get("excluded_paths", [])
+            ) != sorted(expected["excluded_paths"]):
+                raise VerificationError(f"shard {name!r} exclusions do not match policy")
+        try:
+            current = recompute_fingerprint(fingerprint, root)
+        except FingerprintError as exc:
+            raise VerificationError(f"shard {name!r}: {exc}") from exc
+        if current["digest"] != fingerprint.get("digest"):
+            raise VerificationError(f"shard {name!r} fingerprint does not match")
+        carried = shard.get("carried")
+        if carried:
+            if not policy.get("allow_carried", False):
+                raise VerificationError(f"shard {name!r} is carried but policy rejects carry-forward")
+            if not isinstance(carried, dict):
+                raise VerificationError(f"shard {name!r} carried metadata is invalid")
+            original = _parse_time(carried.get("original_ended_at"), f"shard {name}.original_ended_at")
+            age = datetime.datetime.now(datetime.UTC) - original
+            limit = policy.get("carried_max_age_days", 30)
+            if type(limit) is not int or limit < 0:
+                raise VerificationError("carried_max_age_days must be a non-negative integer")
+            if age < datetime.timedelta(minutes=-5) or age > datetime.timedelta(days=limit):
+                raise VerificationError(f"carried shard {name!r} is outside its age policy")
+    if claimed != test_ids:
+        raise VerificationError("shard membership does not exactly partition tests[]")
+    if required and set(required) != names:
+        raise VerificationError("receipt shard set does not match repository policy")

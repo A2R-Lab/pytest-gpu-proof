@@ -1,136 +1,87 @@
-# Local Mode
+# Local mode
 
-Local mode is the default. It is the primary value proposition of this plugin:
-run GPU tests on your own hardware, sign the receipt, let CI verify it.
+Local mode is the primary workflow: run tests on a developer or lab GPU, sign
+the result, and let CPU-only CI verify it.
 
-## Prerequisites
+## Recording contract
 
-- An SSH key registered on your GitHub account (`github.com/settings/keys`).
-  This is the same key you use to push to GitHub — no new key needed.
-- Your code in a git repository with a GitHub remote.
+With `--gpu-proof-enable`, receipt generation is fail-closed:
 
-## Step-by-step
+- no selected tests is an error;
+- setup, call, and teardown failures are recorded;
+- an interrupted test without a terminal report becomes an error;
+- missing Git metadata, empty fingerprints, missing keys, and write failures
+  fail pytest;
+- the previous output is removed at session start, so a failed run cannot
+  leave a stale success artifact.
 
-### 1. Install the plugin
+`--gpu-proof-best-effort` converts receipt-generation errors to warnings. It is
+useful while integrating the plugin, but it should not be used in a release or
+merge workflow.
 
-```bash
-pip install pytest-gpu-proof
+## Signer and key discovery
+
+The GitHub username is selected from:
+
+1. `--gpu-proof-github-user` or `[tool.gpu_proof].github_username`;
+2. authenticated `gh api user` output;
+3. the origin owner, with a warning.
+
+Set the username explicitly for organization-owned repositories. The receipt
+must name the account that actually owns the public SSH key.
+
+The private-key file is selected from:
+
+1. `--gpu-proof-key`;
+2. `git config user.signingKey`;
+3. `~/.ssh/id_ed25519`, `id_ecdsa`, or `id_rsa`.
+
+Encrypted key files prompt for a passphrase. SSH-agent-only and hardware-backed
+keys are not currently supported.
+
+## Source fingerprint
+
+The safe default is the entire tracked repository:
+
+```toml
+[tool.gpu_proof]
+fingerprint_paths = ["."]
 ```
 
-### 2. Write tests using the fixture
+The manifest binds tracked file bytes, symlink targets, executable modes, and
+submodule gitlinks. Untracked build debris is excluded. Explicitly add ignored
+or generated dependencies:
 
-```python
-import pytest
-
-@pytest.mark.gpu_proof
-def test_rnea(gpu_proof_check):
-    gpu_proof_check(
-        name="rnea",
-        reference=pinocchio_rnea,
-        candidate=cuda_rnea,
-        args=(model, q, qd, qdd),
-        metadata={"robot": "go2", "algorithm": "rnea"},
-    )
+```toml
+fingerprint_extra_paths = [
+  "generated/kernel_table.cuh",
+  "vendor/generated-config.json",
+]
+fingerprint_excluded_paths = ["gpu-proof.json"]
 ```
 
-### 3. Run the tests locally (on your GPU machine)
+The default receipt exclusion prevents a tracked `gpu-proof.json` from
+hashing its previous contents and invalidating its replacement. Change this
+list when the committed final receipt uses another path. Exclusions weaken the
+scope like any omission, so repository policy should pin them.
 
-```bash
-pytest tests/ --gpu-proof-enable -v
-```
+Narrowing the tracked paths narrows the claim. Only do it when repository
+policy independently pins the scope and the omitted files cannot influence
+the run.
 
-The plugin:
-- Runs every test normally.
-- For tests that use `gpu_proof_check`, records the comparison outcome.
-- At session end, detects your SSH key, computes a code fingerprint, and signs the receipt.
-- Writes `gpu-proof.json` in the current directory.
+## Clean trees and commit ancestry
 
-Output:
-```
-...
-[gpu-proof] Receipt written to gpu-proof.json
-[gpu-proof] Signed with key SHA256:abc123...
-```
+Schema-3 verification rejects a dirty recording tree or dirty verification
+tree by default. The receipt commit may equal the verified commit or be its
+ancestor; the manifest must still match the checked-out tree. A policy may set
+`allow_dirty: true`, but this weakens reproducibility.
 
-### 4. Commit the receipt
+## Skips
 
-```bash
-git add gpu-proof.json
-git commit -m "gpu proof receipt: update after rnea kernel fix"
-git push
-```
+Selected skips are recorded and rejected by default.
 
-The receipt is a human-readable JSON file. It is safe to commit — it contains no secrets.
+- `--gpu-proof-fail-on-skip` fails recording and writes no receipt.
+- `--expected-skips FILE` accepts exactly the listed node IDs at verification.
+- `--allow-skipped` accepts any selected skip and is intentionally broad.
 
-### 5. Add a CI verification step
-
-```yaml
-# .github/workflows/ci.yml
-- name: Verify GPU proof receipt
-  run: gpu-proof verify --receipt gpu-proof.json
-```
-
-No GPU, no secrets, no CUDA dependencies required in CI.
-
-If your suite has a small set of permanent, documented skips, pin them instead
-of waving all skips through: keep a baseline file (one node ID per line, `#`
-comments allowed) and verify with
-
-```yaml
-- name: Verify GPU proof receipt
-  run: gpu-proof verify --receipt gpu-proof.json --expected-skips expected_skips.txt
-```
-
-Verification then fails on any skip *not* in the baseline (something new is
-being silently skipped) **and** on any baseline entry that no longer skips
-(the baseline is stale — update it). `--allow-skipped` remains the loose
-alternative and the two are mutually exclusive.
-
-## Who signs the receipt
-
-The signer identity recorded in the receipt (and whose `github.com/<user>.keys`
-CI verifies against) is resolved in order:
-1. `--gpu-proof-github-user` / `github_username` in `[tool.gpu_proof]`
-2. the authenticated GitHub CLI login (`gh api user`), if `gh` is available —
-   this is the actual keyholder
-3. the origin remote owner, as a last-resort guess — with a warning, because
-   for org-owned repos this is the **org**, which has no SSH keys, and
-   verification would fail. Set option 1 or 2 up properly in that case.
-
-## Controlling which key is used
-
-By default the plugin tries these in order:
-1. `git config user.signingKey`
-2. `~/.ssh/id_ed25519`
-3. `~/.ssh/id_ecdsa`
-4. `~/.ssh/id_rsa`
-
-To specify explicitly:
-
-```bash
-pytest tests/ --gpu-proof-enable --gpu-proof-key=~/.ssh/my_key -v
-```
-
-## Controlling the fingerprint scope
-
-By default the plugin fingerprints `src/` and `tests/`. To change this:
-
-```bash
-pytest tests/ --gpu-proof-enable --gpu-proof-fingerprint-paths=src,lib,tests -v
-```
-
-## What happens when the repo is dirty
-
-The plugin records `"dirty": true` in the receipt but does not block signing.
-The verifier warns about dirty receipts. You can enforce a clean-tree policy with
-a policy file:
-
-```yaml
-# gpu-proof-policy.yaml
-allow_dirty: false
-max_age_days: 14
-```
-
-```bash
-gpu-proof verify --receipt gpu-proof.json --policy gpu-proof-policy.yaml
-```
+An exact baseline catches both new skips and stale entries that now run.

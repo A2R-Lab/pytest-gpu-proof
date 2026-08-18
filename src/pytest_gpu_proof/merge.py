@@ -4,10 +4,7 @@ Merge shard receipts from one commit into a single re-signed receipt.
 Motivation: large suites run their GPU tests as several pytest invocations
 (per-module crash isolation, machine sharding). Each invocation emits its own
 receipt; CI wants ONE artifact to verify. ``gpu-proof merge`` unions the shard
-receipts' ``tests`` and re-signs the result with the merger's local SSH key —
-so the merged receipt flows through the existing ``gpu-proof verify`` path
-completely unchanged (schema_version stays "1"; the only addition is the
-OPTIONAL ``session.shards`` provenance list, which the verifier ignores).
+receipts' ``tests`` and re-signs the result with the merger's local SSH key.
 
 Trust model (consistent with docs/security_model.md): the merged receipt is an
 attestation by the MERGER — shard signatures are recorded as provenance but are
@@ -61,10 +58,10 @@ def merge_payloads(receipts: List[dict], sources: List[str]) -> dict:
 
     _require_identical(receipts, sources, lambda r: r.get("schema_version"), "schema_version")
     schema = receipts[0].get("schema_version")
-    if schema not in ("1", "2"):
+    if schema not in ("1", "2", "3"):
         raise MergeError(
             f"unsupported schema_version {schema!r} (this version merges "
-            f"schema '1' and schema '2' receipts, not mixed)"
+            f"schema '1', '2', and '3' receipts, not mixed)"
         )
     _require_identical(receipts, sources, lambda r: r.get("repo", {}).get("commit_sha"),
                        "repo.commit_sha")
@@ -91,11 +88,11 @@ def merge_payloads(receipts: List[dict], sources: List[str]) -> dict:
     if not tests:
         raise MergeError("merged receipt would contain zero tests")
 
-    # schema 2: union the shards lists (shard names must be unique across
+    # Sharded receipts: union the shards lists (names must be unique across
     # inputs; a shard's node_ids stay attached to it, so the merged receipt
     # still partitions tests[] by shard for the verifier's membership check).
     merged_shards = None
-    if schema == "2":
+    if schema == "2" or (schema == "3" and any(r.get("shards") for r in receipts)):
         merged_shards = []
         shard_names: dict = {}
         for src, r in zip(sources, receipts):
@@ -110,8 +107,11 @@ def merge_payloads(receipts: List[dict], sources: List[str]) -> dict:
                 merged_shards.append(shard)
 
     sessions = [r.get("session", {}) for r in receipts]
-    started = min(s.get("started_at") for s in sessions)
-    ended = max(s.get("ended_at") for s in sessions)
+    for src, s in zip(sources, sessions):
+        if not isinstance(s.get("started_at"), str) or not isinstance(s.get("ended_at"), str):
+            raise MergeError(f"receipt {src} has no session timestamps")
+    started = min(s["started_at"] for s in sessions)
+    ended = max(s["ended_at"] for s in sessions)
 
     merged = dict(receipts[0])
     merged.pop("signature", None)
@@ -140,11 +140,23 @@ def merge_payloads(receipts: List[dict], sources: List[str]) -> dict:
                 "node_count": len(r.get("tests", [])),
                 "started_at": s.get("started_at"),
                 "ended_at": s.get("ended_at"),
-                "signer": (r.get("signature") or {}).get("signer"),
+                "signer": (
+                    (r.get("signer") or {}).get("github_user")
+                    or (r.get("signature") or {}).get("signer")
+                ),
             }
             for src, r, s in zip(sources, receipts, sessions)
         ],
     }
+    if schema == "3":
+        merged["session"]["outcome"] = (
+            "passed"
+            if all(s.get("outcome") == "passed" for s in sessions)
+            else "failed"
+        )
+        merged["session"]["pytest_args"] = [
+            s.get("pytest_args", []) for s in sessions
+        ]
     if merged_shards is not None:
         merged["shards"] = merged_shards
     return merged
@@ -172,17 +184,18 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
          current tree — the inputs that shard proved are unchanged at HEAD.
 
     Shard signatures are provenance (merge is offline); the re-signed merged
-    receipt is the attestation, and the VERIFIER re-checks every carried
+    receipt is the attestation, and the verifier re-checks every carried
     shard's fingerprint and gates them on policy ``allow_carried``."""
-    from .fingerprint import compute_fingerprint
+    from .fingerprint import FingerprintError, recompute_fingerprint
 
-    if old_receipt.get("schema_version") != "2":
+    if old_receipt.get("schema_version") not in ("2", "3"):
         raise MergeError(
-            f"--carry-from {old_source}: not a schema '2' (sharded) receipt")
+            f"--carry-from {old_source}: not a schema '2'/'3' sharded receipt")
     old_sha = old_receipt.get("repo", {}).get("commit_sha")
     new_sha = payload.get("repo", {}).get("commit_sha")
-    if old_sha and new_sha and old_sha != new_sha and not _git_is_ancestor(
-            repo_root, old_sha, new_sha):
+    if not old_sha or not new_sha:
+        raise MergeError("carry-forward receipts must contain commit SHAs")
+    if old_sha != new_sha and not _git_is_ancestor(repo_root, old_sha, new_sha):
         raise MergeError(
             f"--carry-from {old_source}: its commit {old_sha[:12]} is not an "
             f"ancestor of {new_sha[:12]} — different history, cannot carry.")
@@ -196,7 +209,12 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
         if nm in fresh_names:
             continue  # freshly re-run — the new result wins
         sfp = shard.get("fingerprint", {})
-        snow = compute_fingerprint(sfp.get("included_paths", []), root=repo_root)
+        try:
+            snow = recompute_fingerprint(sfp, root=repo_root)
+        except FingerprintError as exc:
+            raise MergeError(
+                f"--carry-from {old_source}: shard {nm!r} fingerprint is invalid: {exc}"
+            ) from exc
         if snow["digest"] != sfp.get("digest"):
             raise MergeError(
                 f"--carry-from {old_source}: shard {nm!r} fingerprint no longer "
@@ -213,7 +231,10 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
             "from": old_source.rsplit("/", 1)[-1],
             "original_commit_sha": old_sha,
             "original_ended_at": old_receipt.get("session", {}).get("ended_at"),
-            "original_signer": (old_receipt.get("signature") or {}).get("signer"),
+            "original_signer": (
+                (old_receipt.get("signer") or {}).get("github_user")
+                or (old_receipt.get("signature") or {}).get("signer")
+            ),
         }
         payload.setdefault("shards", []).append(grafted)
         for nid in ids:
@@ -225,7 +246,7 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
             fresh_ids.add(nid)
         carried_count += 1
     payload["session"]["node_ids"] = [t["node_id"] for t in payload["tests"]]
-    payload["schema_version"] = "2"
+    payload["schema_version"] = str(payload.get("schema_version"))
     if not carried_count:
         print(f"[gpu-proof] merge: nothing to carry from {old_source} "
               f"(all its shards were freshly re-run)")
@@ -248,7 +269,7 @@ def merge_receipts(
     shard's ``repo.github_username`` — correct when the merger is also the shard
     runner). ``unsigned=True`` writes ``signature: null`` (verifies only with
     ``--allow-unsigned``, loudly, same as the plugin's 'none' backend).
-    ``carry_from`` grafts still-valid shards from an older schema-2 receipt —
+    ``carry_from`` grafts still-valid shards from an older sharded receipt —
     see :py:func:`carry_forward` for the soundness conditions.
     """
     receipts = [load_receipt(p) for p in paths]
@@ -265,7 +286,7 @@ def merge_receipts(
         receipt["signature"] = None
     else:
         from .signers.ed25519 import SSHSigner
-        signer = SSHSigner(key_path=key_path)
+        signer = SSHSigner(key_path=key_path, root=repo_root)
         receipt = finalize_receipt(payload, signer)
     write_receipt(receipt, out)
     return receipt

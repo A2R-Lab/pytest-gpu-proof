@@ -1,51 +1,101 @@
+"""Small, strict git helpers used by receipt capture and verification."""
+
+from __future__ import annotations
+
+import os
 import re
 import subprocess
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, Sequence
 
 
-def _git(*args) -> Optional[str]:
+class GitError(RuntimeError):
+    """Raised when a trust-relevant git query cannot be completed."""
+
+
+@dataclass(frozen=True)
+class TrackedEntry:
+    path: str
+    mode: str
+    object_id: str
+
+
+def _git(*args: str, root: str = ".", required: bool = False) -> Optional[str]:
     try:
         result = subprocess.run(
-            ["git"] + list(args),
+            ["git", "-C", root, *args],
             capture_output=True,
             text=True,
             check=True,
         )
-        return result.stdout.strip() or None
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        if required:
+            detail = getattr(exc, "stderr", "") or str(exc)
+            raise GitError(f"git {' '.join(args)} failed in {root}: {detail.strip()}") from exc
         return None
+    return result.stdout.strip() or None
 
 
-def get_commit_sha() -> Optional[str]:
-    return _git("rev-parse", "HEAD")
+def require_repository(root: str = ".") -> None:
+    if _git("rev-parse", "--show-toplevel", root=root) is None:
+        raise GitError(f"{root!r} is not inside a git repository")
 
 
-def get_branch() -> Optional[str]:
-    return _git("rev-parse", "--abbrev-ref", "HEAD")
+def get_commit_sha(root: str = ".", *, required: bool = False) -> Optional[str]:
+    return _git("rev-parse", "HEAD", root=root, required=required)
 
 
-def is_dirty() -> bool:
-    # --ignore-submodules=untracked: untracked files INSIDE a submodule (build
-    # deps, caches) cannot change the code a receipt attests — the submodule's
-    # content is pinned by the parent's gitlink, and a *pin* change (a different
-    # or new commit checked out in the submodule) still reports as modified
-    # under this flag. Without it, a consumer whose submodule carries build
-    # artifacts can never produce a clean receipt (first hit: GATO's sqpcpu
-    # baseline submodule).
+def get_branch(root: str = ".") -> Optional[str]:
+    return _git("rev-parse", "--abbrev-ref", "HEAD", root=root)
+
+
+def is_dirty(
+    root: str = ".",
+    *,
+    required: bool = False,
+    exclude_paths: Sequence[str] = (),
+) -> bool:
     try:
         result = subprocess.run(
-            ["git", "status", "--porcelain", "--ignore-submodules=untracked"],
+            [
+                "git",
+                "-C",
+                root,
+                "status",
+                "--porcelain",
+                "-z",
+                "--ignore-submodules=untracked",
+            ],
             capture_output=True,
-            text=True,
             check=True,
         )
-        return bool(result.stdout.strip())
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        if required:
+            raise GitError(f"could not inspect git status in {root}") from exc
         return False
+    excluded = set(exclude_paths)
+    records = result.stdout.split(b"\0")
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue
+        status = record[:2]
+        paths = [record[3:].decode("utf-8", errors="surrogateescape")]
+        if b"R" in status or b"C" in status:
+            if index < len(records) and records[index]:
+                paths.append(
+                    records[index].decode("utf-8", errors="surrogateescape")
+                )
+                index += 1
+        if any(path not in excluded for path in paths):
+            return True
+    return False
 
 
-def get_remote_url() -> Optional[str]:
-    return _git("remote", "get-url", "origin")
+def get_remote_url(root: str = ".") -> Optional[str]:
+    return _git("remote", "get-url", "origin", root=root)
 
 
 def extract_github_username(remote_url: str) -> Optional[str]:
@@ -53,18 +103,12 @@ def extract_github_username(remote_url: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
-def get_github_username() -> Optional[str]:
-    url = get_remote_url()
+def get_github_username(root: str = ".") -> Optional[str]:
+    url = get_remote_url(root)
     return extract_github_username(url) if url else None
 
 
 def get_gh_cli_login() -> Optional[str]:
-    """The authenticated GitHub CLI user, if `gh` is installed and logged in.
-
-    This is the KEYHOLDER — the account whose github.com/<user>.keys will
-    verify the receipt — unlike the origin-remote owner, which for org-owned
-    repos is an org with no SSH keys.
-    """
     try:
         result = subprocess.run(
             ["gh", "api", "user", "--jq", ".login"],
@@ -73,40 +117,51 @@ def get_gh_cli_login() -> Optional[str]:
             check=True,
             timeout=10,
         )
-        return result.stdout.strip() or None
-    except (subprocess.CalledProcessError, FileNotFoundError,
-            subprocess.TimeoutExpired):
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+    ):
         return None
+    return result.stdout.strip() or None
 
 
-def get_git_signing_key() -> Optional[str]:
-    val = _git("config", "--get", "user.signingKey")
-    if not val:
-        return None
-    import os
-    return os.path.expanduser(val)
+def get_git_signing_key(root: str = ".") -> Optional[str]:
+    value = _git("config", "--get", "user.signingKey", root=root)
+    return os.path.expanduser(value) if value else None
 
 
-def get_tracked_files(paths, root="."):
+def get_tracked_entries(paths: Sequence[str], root: str = ".") -> list[TrackedEntry]:
+    """Return stage-0 tracked entries under *paths*, including gitlinks."""
+    if not paths:
+        raise GitError("fingerprint path list is empty")
     try:
         result = subprocess.run(
-            ["git", "ls-files"] + list(paths),
+            ["git", "-C", root, "ls-files", "--stage", "-z", "--", *paths],
             capture_output=True,
-            text=True,
             check=True,
-            cwd=root,
         )
-        return sorted(line for line in result.stdout.splitlines() if line)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        import os
-        files = []
-        for path in paths:
-            full = os.path.join(root, path)
-            if os.path.isfile(full):
-                files.append(os.path.relpath(full, root))
-            elif os.path.isdir(full):
-                for dirpath, _, filenames in os.walk(full):
-                    for fn in filenames:
-                        fp = os.path.join(dirpath, fn)
-                        files.append(os.path.relpath(fp, root))
-        return sorted(files)
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        raise GitError(f"could not enumerate tracked files in {root}") from exc
+
+    entries: list[TrackedEntry] = []
+    for raw in result.stdout.split(b"\0"):
+        if not raw:
+            continue
+        metadata, raw_path = raw.split(b"\t", 1)
+        mode, object_id, stage = metadata.decode().split()
+        if stage != "0":
+            raise GitError(f"unmerged index entry cannot be fingerprinted: {raw_path!r}")
+        entries.append(
+            TrackedEntry(
+                path=raw_path.decode("utf-8", errors="surrogateescape"),
+                mode=mode,
+                object_id=object_id,
+            )
+        )
+    return sorted(entries, key=lambda entry: entry.path)
+
+
+def get_tracked_files(paths: Sequence[str], root: str = ".") -> list[str]:
+    """Compatibility wrapper retained for legacy fingerprint verification."""
+    return [entry.path for entry in get_tracked_entries(paths, root)]

@@ -4,6 +4,69 @@ All notable changes to pytest-gpu-proof are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/) (pre-1.0: minor bumps may break).
 
+## [Unreleased] — 0.4.0
+
+### Added
+
+- Schema `"3"`: signer username, key fingerprint, key algorithm, exact test
+  collection, session outcome, pytest arguments, and per-shard environment/time
+  are included in the signed payload.
+- Open contributor and restricted signer policies. Restricted mode supports
+  username and exact SSH-key-fingerprint allowlists.
+- Policy pinning for mode, global tracked/extra fingerprint scope, exact test
+  manifest, shard names, and per-shard tracked/extra scope.
+- Explicit fingerprint paths for ignored/generated inputs and manifest support
+  for symlinks and submodule gitlinks.
+- Explicit receipt-artifact exclusions avoid self-referential whole-tree
+  fingerprints and can be pinned by verification policy.
+- `--gpu-proof-best-effort` as an explicit development escape hatch.
+- `min_schema` policy field to refuse legacy schema-1/2 receipts.
+- Python 3.13 CI, strict docs/package jobs, and enforced 100% line and branch
+  coverage.
+
+### Changed
+
+- The default fingerprint scope is the entire Git-tracked repository instead
+  of `src,tests`.
+- Receipt creation now fails pytest on Git, fingerprint, key, serialization, or
+  write errors; it also removes stale output at session start.
+- Schema-3 verification rejects dirty recording and verification trees by
+  default and accepts receipt commits only at the current commit or an ancestor.
+- Setup/teardown failures, missing terminal reports, comparison exceptions,
+  skipped tests, and overall session failure are represented and verified.
+- GPU metadata records all devices reported by `nvidia-smi`.
+- Array comparison is shape-safe, uses tolerance only for float/complex data,
+  and uses exact equality for other dtypes.
+- Receipt writes are atomic and strict JSON forbids NaN/non-JSON values.
+- Receipt generation rejects xdist workers; use separate shard processes.
+- Legacy schema-1/2 verification derives the policy-checked key fingerprint
+  from the key that actually verified the signature; an asserted
+  `signature.key_fingerprint` that disagrees is rejected.
+- `signer_mode: restricted` policies reject unsigned receipts even with
+  `--allow-unsigned`, and `--github-user` must match the signed schema-3
+  identity.
+- The receipt under verification is excluded from the verification-tree dirty
+  check, so an untracked just-generated receipt verifies without gitignoring.
+- Passphrase-protected SSH keys prompt correctly on current cryptography
+  releases (`ValueError` as well as `TypeError`) and fail closed with an
+  actionable message when no terminal is available.
+- Uninitialized submodule checkouts fingerprint their index gitlink commit
+  instead of accidentally recording the parent repository's HEAD.
+- Receipt/shard age limits are enforced to the exact day boundary.
+- GitHub usernames are validated before key fetches and key responses are
+  size-capped.
+- A stale receipt that cannot be cleared at session start raises a pytest
+  usage error (an exit-status write that early would be silently overwritten).
+- Merging receipts without session timestamps is refused with a clear error.
+
+### Fixed
+
+- Carry-forward now recomputes the stored fingerprint algorithm and preserves
+  explicit generated/ignored shard inputs.
+- Signed identity and algorithm substitution are rejected.
+- Empty source scope, unmerged index entries, malformed policies, incomplete
+  collections, and stale success artifacts fail closed.
+
 ## [0.3.0] — 2026-08-08
 
 ### Added

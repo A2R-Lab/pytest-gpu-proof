@@ -7,6 +7,7 @@ At session end, builds a signed receipt for every test that used the fixture.
 
 import datetime
 import warnings
+from pathlib import Path
 from typing import Any, Dict, List
 
 import pytest
@@ -39,6 +40,8 @@ class GpuProofPlugin:
     def __init__(self, pytest_config):
         self.gpu_proof_config: GpuProofConfig = load_config(pytest_config)
         self.test_results: List[Dict[str, Any]] = []
+        self._results_by_node: Dict[str, Dict[str, Any]] = {}
+        self.collected_node_ids: List[str] = []
         self.skipped_required: List[str] = []
         self.started_at: str = ""
 
@@ -48,13 +51,52 @@ class GpuProofPlugin:
 
     def pytest_sessionstart(self, session):
         self.started_at = _utcnow()
+        output = Path(self.gpu_proof_config.output)
+        if not output.is_absolute():
+            output = Path(self.gpu_proof_config.repo_root) / output
+            self.gpu_proof_config.output = str(output)
+        try:
+            output.unlink(missing_ok=True)
+        except OSError as exc:
+            # An exitstatus write here would be overwritten by wrap_session;
+            # only UsageError reliably fails the run this early.
+            if self.gpu_proof_config.best_effort:
+                self._fail_or_warn(session, f"cannot clear stale receipt {output}: {exc}")
+            else:
+                raise pytest.UsageError(
+                    f"[gpu-proof] cannot clear stale receipt {output}: {exc}"
+                ) from exc
+
+    def pytest_collection_finish(self, session):
+        self.collected_node_ids = [
+            item.nodeid
+            for item in session.items
+            if self._is_marked(item)
+            or "gpu_proof_check" in getattr(item, "fixturenames", ())
+        ]
+
+    def _fail_or_warn(self, session, message):
+        if self.gpu_proof_config.best_effort:
+            warnings.warn(f"[gpu-proof] {message}", stacklevel=1)
+        else:
+            print(f"\n[gpu-proof] ERROR: {message}")
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
     def pytest_sessionfinish(self, session, exitstatus):
         if not self.gpu_proof_config.enabled:
             return
 
+        if not self.collected_node_ids:
+            print(
+                "\n[gpu-proof] --gpu-proof-enable is set but no gpu_proof tests were found."
+            )
+            self._fail_or_warn(session, "receipt requested but no marked tests were collected")
+            return
+
         skipped_marked = [
-            t["node_id"] for t in self.test_results if t.get("outcome") == "skipped"
+            node_id
+            for node_id, result in self._results_by_node.items()
+            if result.get("outcome") == "skipped"
         ]
         if self.gpu_proof_config.fail_on_skip and (skipped_marked or self.skipped_required):
             names = sorted(set(skipped_marked + self.skipped_required))
@@ -64,18 +106,24 @@ class GpuProofPlugin:
                 + "".join(f"            - {n}\n" for n in names)
                 + "            No receipt was written; session marked as failed."
             )
-            session.exitstatus = 1
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
             return
 
-        if not self.test_results:
-            print(
-                "\n[gpu-proof] --gpu-proof-enable is set but no gpu_proof tests were found.\n"
-                "            Add @pytest.mark.gpu_proof to your tests or use the gpu_proof_check fixture.\n"
-                "            No receipt was written.\n"
-                "            Tip: try 'pytest examples/minimal_python_only/test_minimal.py --gpu-proof-enable -v'"
-            )
-            return
-        self._emit_receipt()
+        for node_id in self.collected_node_ids:
+            if node_id not in self._results_by_node:
+                self._results_by_node[node_id] = {
+                    "node_id": node_id,
+                    "outcome": "error",
+                    "duration_s": 0.0,
+                    "checks": [],
+                    "phase": "missing-terminal-report",
+                }
+        self.test_results = [self._results_by_node[node] for node in self.collected_node_ids]
+        session_outcome = "passed" if session.exitstatus == pytest.ExitCode.OK else "failed"
+        try:
+            self._emit_receipt(session_outcome)
+        except Exception as exc:
+            self._fail_or_warn(session, f"failed to create receipt: {exc}")
 
     # ------------------------------------------------------------------
     # result collection
@@ -92,21 +140,36 @@ class GpuProofPlugin:
         outcome = yield
         report = outcome.get_result()
 
+        included = self._is_marked(item) or "gpu_proof_check" in getattr(
+            item, "fixturenames", ()
+        )
+        if not included:
+            if call.when == "setup" and report.skipped and item.get_closest_marker("gpu_required"):
+                self.skipped_required.append(item.nodeid)
+            return
+
         if call.when == "setup" and report.skipped:
             # Skipped tests never reach the "call" phase — record them here so
             # they are visible in the receipt (and to --gpu-proof-fail-on-skip)
             # instead of being silently dropped.
-            if item.get_closest_marker("gpu_required") and not self._is_marked(item):
-                self.skipped_required.append(item.nodeid)
-            if self._is_marked(item):
-                self.test_results.append(
-                    {
-                        "node_id": item.nodeid,
-                        "outcome": "skipped",
-                        "duration_s": round(call.duration, 4),
-                        "checks": [],
-                    }
-                )
+            self._results_by_node[item.nodeid] = {
+                "node_id": item.nodeid,
+                "outcome": "skipped",
+                "duration_s": round(call.duration, 4),
+                "checks": [],
+                "phase": "setup",
+            }
+            return
+
+        if report.failed:
+            previous = self._results_by_node.get(item.nodeid, {})
+            self._results_by_node[item.nodeid] = {
+                "node_id": item.nodeid,
+                "outcome": "failed",
+                "duration_s": round(previous.get("duration_s", 0.0) + call.duration, 4),
+                "checks": getattr(item, "_gpu_proof_checks", previous.get("checks", [])),
+                "phase": call.when,
+            }
             return
 
         if call.when == "teardown":
@@ -115,17 +178,12 @@ class GpuProofPlugin:
             # already-recorded entry here so checks are not silently dropped.
             checks = getattr(item, "_gpu_proof_checks", None)
             if checks is not None:
-                for t in reversed(self.test_results):
-                    if t["node_id"] == item.nodeid:
-                        t["checks"] = checks
-                        break
+                result = self._results_by_node.get(item.nodeid)
+                if result is not None:
+                    result["checks"] = checks
             return
 
         if call.when != "call":
-            return
-
-        uses_fixture = "gpu_proof_check" in getattr(item, "fixturenames", ())
-        if not uses_fixture and not self._is_marked(item):
             return
 
         if report.passed:
@@ -135,56 +193,45 @@ class GpuProofPlugin:
         else:
             outcome_str = "failed"
 
-        self.test_results.append(
-            {
-                "node_id": item.nodeid,
-                "outcome": outcome_str,
-                "duration_s": round(call.duration, 4),
-                "checks": [],  # filled in at teardown once the fixture finalizes
-            }
-        )
+        self._results_by_node[item.nodeid] = {
+            "node_id": item.nodeid,
+            "outcome": outcome_str,
+            "duration_s": round(call.duration, 4),
+            "checks": [],
+            "phase": "call",
+        }
 
     # ------------------------------------------------------------------
     # receipt emission
     # ------------------------------------------------------------------
 
-    def _emit_receipt(self):
+    def _emit_receipt(self, session_outcome):
         from .receipt import build_receipt_payload, finalize_receipt, write_receipt
         from .signers.ed25519 import SSHSigner
-        from .signers.base import VerifierError
 
         ended_at = _utcnow()
         cfg = self.gpu_proof_config
 
+        payload = build_receipt_payload(
+            cfg,
+            self.test_results,
+            self.started_at,
+            ended_at,
+            session_outcome=session_outcome,
+            collected_node_ids=self.collected_node_ids,
+        )
         if cfg.signing_backend == "none":
-            try:
-                payload = build_receipt_payload(cfg, self.test_results, self.started_at, ended_at)
-                receipt = dict(payload)
-                receipt["signature"] = None
-                write_receipt(receipt, cfg.output)
-                print(f"\n[gpu-proof] Receipt written to {cfg.output}")
-                print(
-                    "[gpu-proof] WARNING: signing backend is 'none' — the receipt is UNSIGNED\n"
-                    "            and will fail verification unless --allow-unsigned is passed."
-                )
-            except Exception as e:
-                warnings.warn(f"[gpu-proof] Failed to write receipt: {e}", stacklevel=1)
-            return
-
-        try:
-            signer = SSHSigner(key_path=cfg.key_path)
-        except VerifierError as e:
-            warnings.warn(f"[gpu-proof] Signing skipped: {e}", stacklevel=1)
-            return
-
-        try:
-            payload = build_receipt_payload(cfg, self.test_results, self.started_at, ended_at)
+            receipt = dict(payload)
+            receipt["signature"] = None
+        else:
+            signer = SSHSigner(key_path=cfg.key_path, root=cfg.repo_root)
             receipt = finalize_receipt(payload, signer)
-            write_receipt(receipt, cfg.output)
-            print(f"\n[gpu-proof] Receipt written to {cfg.output}")
+        write_receipt(receipt, cfg.output)
+        print(f"\n[gpu-proof] Receipt written to {cfg.output}")
+        if cfg.signing_backend == "none":
+            print("[gpu-proof] WARNING: receipt is UNSIGNED")
+        else:
             print(f"[gpu-proof] Signed with key {signer.key_fingerprint()}")
-        except Exception as e:
-            warnings.warn(f"[gpu-proof] Failed to write receipt: {e}", stacklevel=1)
 
 
 # ------------------------------------------------------------------
@@ -224,12 +271,6 @@ def pytest_addoption(parser):
         help="Signing backend (default: ed25519 via SSH key)",
     )
     group.addoption(
-        "--gpu-proof-policy",
-        default=None,
-        metavar="PATH",
-        help="Path to verification policy YAML",
-    )
-    group.addoption(
         "--gpu-proof-required-marker",
         default=None,
         help="Marker name that flags a test for the receipt (default: gpu_proof)",
@@ -244,14 +285,27 @@ def pytest_addoption(parser):
         "--gpu-proof-fingerprint-paths",
         default=None,
         metavar="PATHS",
-        help="Comma-separated paths to fingerprint (default: src,tests)",
+        help="Comma-separated tracked paths to fingerprint (default: entire repository)",
+    )
+    group.addoption(
+        "--gpu-proof-fingerprint-extra-paths",
+        default=None,
+        metavar="PATHS",
+        help="Explicit generated/ignored files or directories to fingerprint",
+    )
+    group.addoption(
+        "--gpu-proof-fingerprint-excluded-paths",
+        default=None,
+        metavar="PATHS",
+        help="Comma-separated receipt artifacts to exclude from the source manifest "
+        "(default: gpu-proof.json)",
     )
     group.addoption(
         "--gpu-proof-shard",
         default=None,
         metavar="NAME",
-        help="Declare this run as one SHARD of a larger suite: the receipt is "
-        "emitted as schema '2' with a per-shard fingerprint, enabling "
+        help="Declare this run as one SHARD of a larger suite: the receipt has "
+        "a per-shard fingerprint, enabling "
         "verifiable carry-forward via `gpu-proof merge --carry-from`",
     )
     group.addoption(
@@ -262,10 +316,22 @@ def pytest_addoption(parser):
         "(default: the global fingerprint paths)",
     )
     group.addoption(
+        "--gpu-proof-shard-fingerprint-extra-paths",
+        default=None,
+        metavar="PATHS",
+        help="Explicit generated/ignored inputs for this shard",
+    )
+    group.addoption(
         "--gpu-proof-github-user",
         default=None,
         metavar="USERNAME",
         help="GitHub username of the signer (default: auto-detect from git remote)",
+    )
+    group.addoption(
+        "--gpu-proof-best-effort",
+        action="store_true",
+        default=False,
+        help="Warn instead of failing pytest when receipt creation fails",
     )
 
 
@@ -283,16 +349,16 @@ def pytest_configure(config):
         enabled = False
 
     if enabled:
+        if hasattr(config, "workerinput"):
+            raise pytest.UsageError(
+                "pytest-gpu-proof does not support xdist workers; run receipt "
+                "shards as separate pytest processes and merge them instead"
+            )
         plugin = GpuProofPlugin(config)
         config.pluginmanager.register(plugin, "gpu-proof-plugin")
 
 
 def pytest_collection_modifyitems(config, items):
-    try:
-        enabled = config.getoption("--gpu-proof-enable")
-    except ValueError:
-        enabled = False
-
     skip_no_gpu = pytest.mark.skip(reason="No GPU available (gpu_required marker)")
     has_gpu = None  # lazy
 

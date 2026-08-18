@@ -1,33 +1,37 @@
 # pytest-gpu-proof
 
-A pytest plugin that lets you run GPU equivalence tests locally, sign the results with your existing SSH key, and have GitHub Actions verify the receipt — **without re-running the GPU tests in CI**.
+**Signed pytest receipts for local GPU runs, verified in CPU-only CI.**
 
-The trust model is simple: if you can push to GitHub, you can sign a receipt. Verification fetches your public keys from `github.com/{username}.keys`, exactly as SSH does.
+The plugin turns an ordinary marked pytest run into a signed, reviewable
+artifact. The receipt binds a signer, exact test node IDs and outcomes, a Git
+commit, a source manifest, timestamps, and environment metadata. CPU-only CI
+validates those claims without importing CUDA or rerunning the GPU suite.
 
-> **Requirements:** Python 3.11+ · pytest 7.0+ · cryptography 41.0+
-> The package is not yet on PyPI — install from source with `pip install -e .` or `pip install "git+https://github.com/A2R-Lab/pytest-gpu-proof.git"`.
-
-## How it works
-
-```
-Local machine (GPU)               GitHub Actions (CPU only)
-─────────────────────────────     ──────────────────────────────────────
-pytest --gpu-proof-enable  →  →   gpu-proof verify --receipt gpu-proof.json
-  runs your GPU tests              fetches your public keys from
-  computes code fingerprint          github.com/{you}.keys
-  signs receipt with SSH key       verifies signature + fingerprint
-  writes gpu-proof.json            exits 0 (pass) or 1 (fail)
+```text
+local or lab GPU                         ordinary CI runner
+─────────────────────────────────        ─────────────────────────────
+pytest --gpu-proof-enable       ───────▶ gpu-proof verify
+run + fingerprint + sign                 authenticate + recompute + policy
 ```
 
-**Zero new key management.** The plugin uses the SSH key you already have in `~/.ssh/` (the same one you use to push to GitHub). Your public key is already on GitHub. The verifier reads it from there.
+The default open signer mode supports contributor-signed pull requests.
+Restricted policy can instead allowlist maintainers, dedicated CI accounts,
+or exact SSH key fingerprints.
 
-## Documentation
+!!! important
+    A receipt proves that a GitHub-key holder attested to the signed payload.
+    It does not prove that the GPU or local machine was trustworthy. Read the
+    [security model](security_model.md).
 
-- [Quickstart](quickstart.md) — local CUDA proof, GitHub verification, end to end
-- [Local Mode](local_mode.md) — the default workflow: sign locally, verify in CI
-- [CI-GPU Mode](ci_gpu_mode.md) — run the tests on a GitHub-hosted GPU runner instead
-- [Architecture](architecture.md) — package layout and data flow
-- [Security Model](security_model.md) — what a receipt does and does not establish
-- [Landscape](landscape.md) — why this tool exists rather than an existing one
+## Start here
 
-See the [README on GitHub](https://github.com/A2R-Lab/pytest-gpu-proof#readme) for the full CLI reference, receipt format, and examples.
+- [Quickstart](quickstart.md): add a test, record a receipt, verify it in CI.
+- [Local mode](local_mode.md): signer discovery, source scope, and failures.
+- [Policy](policy.md): open and restricted trust policies.
+- [Sharding and merge](sharding.md): separate processes and carry-forward.
+- [CI-GPU mode](ci_gpu_mode.md): produce receipts in controlled GPU CI.
+- [Architecture](architecture.md): schema and data flow.
+- [Security model](security_model.md): exact guarantees and limits.
+
+Requirements: Python 3.11+, pytest 7+, and an SSH private-key file whose public
+key is registered on GitHub.
