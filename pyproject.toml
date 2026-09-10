@@ -1,0 +1,87 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pytest-gpu-proof"
+version = "0.4.0"
+description = "pytest plugin for GPU equivalence testing with signed receipts verified via GitHub SSH keys"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["pytest", "gpu", "cuda", "testing", "signing", "attestation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Security :: Cryptography",
+]
+dependencies = [
+    "pytest>=7.0",
+    "cryptography>=41.0",
+]
+
+[project.urls]
+Homepage = "[ANONYMIZED-REPO-URL]"
+Documentation = "[ANONYMIZED-DOCS-URL]"
+Repository = "[ANONYMIZED-REPO-URL]"
+Issues = "[ANONYMIZED-REPO-URL]"
+Changelog = "[ANONYMIZED-REPO-URL]"
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2",
+    "mkdocs-material>=9.5",
+    "numpy>=1.26",
+    "coverage[toml]>=7.6",
+    "hatchling>=1.25",
+    "PyYAML>=6.0",
+    "twine>=5.0",
+]
+yaml = ["PyYAML>=6.0"]
+
+[project.entry-points."pytest11"]
+gpu-proof = "pytest_gpu_proof.plugin"
+
+[project.scripts]
+gpu-proof = "pytest_gpu_proof.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pytest_gpu_proof"]
+core-metadata-version = "2.4"
+
+[tool.hatch.build.targets.sdist]
+core-metadata-version = "2.4"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+
+[tool.coverage.run]
+branch = true
+source = ["pytest_gpu_proof"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = true
+
+[tool.gpu_proof]
+# Default plugin/verifier configuration, read from the rootdir pyproject.toml.
+# CLI flags take precedence over values set here.
+# mode = "local"
+# output = "gpu-proof.json"
+# signing_backend = "ed25519"
+# required_marker = "gpu_proof"
+# fail_on_skip = false
+# fingerprint_paths = ["."]
+# fingerprint_excluded_paths = ["gpu-proof.json"]
+# max_age_days = 30       # verifier freshness default
+# require_gpu = false     # verifier: require environment.gpu_info in the receipt
