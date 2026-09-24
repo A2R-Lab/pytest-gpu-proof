@@ -29,8 +29,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/A2R-Lab/pytest-gpu-proof"
-Documentation = "https://a2r-lab.github.io/pytest-gpu-proof/"
+Homepage = "https://a2r-lab.org/pytest-gpu-proof/"
+Documentation = "https://a2r-lab.org/pytest-gpu-proof/docs/"
 Repository = "https://github.com/A2R-Lab/pytest-gpu-proof"
 Issues = "https://github.com/A2R-Lab/pytest-gpu-proof/issues"
 Changelog = "https://github.com/A2R-Lab/pytest-gpu-proof/blob/main/CHANGELOG.md"

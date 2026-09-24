@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pytest-gpu-proof | Local GPU tests, CPU-only CI</title>
+  <meta name="description" content="Run GPU tests on local hardware and verify signed pytest receipts in CPU-only CI. Connect test outcomes to source code with repository-controlled trust policies.">
+  <meta name="author" content="Brian Plancher">
+  <meta name="theme-color" content="#087c58">
+  <link rel="canonical" href="https://a2r-lab.org/pytest-gpu-proof/">
+  <meta property="og:title" content="pytest-gpu-proof | Local GPU tests, CPU-only CI">
+  <meta property="og:description" content="Use the GPUs you already have. Bring signed, source-bound test results into ordinary CI.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://a2r-lab.org/pytest-gpu-proof/">
+  <meta name="citation_title" content="pytest-gpu-proof: Enabling Cloud-CPU Continuous Integration for GPU Code with Local GPU Attestation">
+  <meta name="citation_author" content="Plancher, Brian">
+  <meta name="citation_publication_date" content="2026">
+  <meta name="citation_pdf_url" content="https://a2r-lab.org/pytest-gpu-proof/landing/workshop-abstract.pdf">
+  <link rel="icon" href="landing/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&amp;family=Source+Serif+4:wght@400;600;700&amp;family=DM+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="landing/style.css">
+  <script src="landing/main.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar"><nav class="container" aria-label="Main navigation">
+  <a class="brand" href="https://a2r-lab.org/">A²R LAB</a>
+  <div class="navlinks"><a href="#workflow">How it works</a><a href="#trust">Trust model</a><a href="docs/">Documentation ↗</a></div>
+</nav></header>
+<main id="main" class="container">
+  <section class="hero" aria-labelledby="title">
+    <span class="badge">Open-source testing infrastructure</span>
+    <h1 id="title">pytest-gpu-proof</h1>
+    <p class="hero-heading">Run GPU tests locally.<br>Verify signed results in CPU-only CI.</p>
+    <p class="hero-sub">Bring GPU testing into everyday development without an always-on GPU CI runner. Record local pytest results in a signed receipt that connects the tests, outcomes, and source code, then verify that receipt in ordinary CPU-only CI.</p>
+    <div class="links">
+      <a class="button primary" href="#get-started">Get started</a>
+      <a class="button" href="docs/">Documentation</a>
+      <a class="button" href="https://github.com/A2R-Lab/pytest-gpu-proof">GitHub ↗</a>
+      <a class="button" href="https://pypi.org/project/pytest-gpu-proof/">PyPI ↗</a>
+    </div>
+    <p class="paper-shortcut"><a href="#paper">Workshop abstract</a><span aria-hidden="true"> · </span><span>arXiv forthcoming</span></p>
+  </section>
+
+  <section id="workflow" aria-labelledby="workflow-title">
+    <div class="eyebrow">How it works</div>
+    <h2 id="workflow-title">Keep the GPU run local. Make the results checkable.</h2>
+    <figure>
+      <picture><source media="(max-width:720px)" srcset="landing/workflow-mobile.svg" width="440" height="830"><img class="workflow-figure" src="landing/workflow.svg" width="1040" height="398" alt="On a local GPU, run marked pytest tests, record the source fingerprint and outcomes, and sign a receipt with an SSH key. Commit gpu-proof.json. CPU-only CI verifies the signature, source match, outcomes, and repository policy. The local run and its metadata are attested by the signer, not independently proven."></picture>
+      <figcaption>Adapted from the workshop abstract. Rerun affected GPU tests when fingerprinted inputs change or repository policy requires fresh results. Verification checks the receipt without rerunning the GPU computation.</figcaption>
+      <div class="figure-links"><a href="landing/workflow.svg">Enlarge workflow</a><a href="landing/workshop-abstract.pdf">Workshop abstract PDF</a></div>
+    </figure>
+    <div class="benefits">
+      <article class="card"><h3>Use the GPUs you already have</h3><p>Run marked pytest tests on local or lab hardware and bring the results into ordinary CI.</p></article>
+      <article class="card"><h3>Connect results to the code</h3><p>Signed receipts record the source fingerprint, selected tests, outcomes, and run time. Verification detects mismatched code and checks freshness.</p></article>
+      <article class="card"><h3>Choose whom to trust</h3><p>Accept contributor-signed receipts or restrict verification to approved users and keys.</p></article>
+    </div>
+  </section>
+
+  <section id="get-started" aria-labelledby="start-title">
+    <div class="eyebrow">Get started</div>
+    <h2 id="start-title">Add receipts to your existing pytest workflow.</h2>
+    <p>Use Python 3.11 or newer and an SSH private-key file whose public key is registered on GitHub. Run these commands from the Git repository you want to test.</p>
+    <div class="steps">
+      <article><h3><span class="step">1</span> Install and select your tests</h3>
+        <pre><code>python -m pip install pytest-gpu-proof</code></pre>
+        <p>Add <code>@pytest.mark.gpu_proof</code> to existing GPU tests. Keep their assertions, or use the optional <a href="docs/quickstart/#2-select-and-compare-a-gpu-test">comparison fixture</a> to check a GPU implementation against a reference. Commit your source and test changes before recording.</p>
+      </article>
+      <article><h3><span class="step">2</span> Run locally and record a receipt</h3>
+        <pre><code>pytest tests/gpu --gpu-proof-enable \
+  --gpu-proof-github-user YOUR_GITHUB_USER
+gpu-proof verify --receipt gpu-proof.json --repo .</code></pre>
+        <p>Replace <code>tests/gpu</code> with your test path. The default fingerprint covers tracked files. Declare generated or ignored inputs explicitly if your tests depend on them.</p>
+      </article>
+      <article><h3><span class="step">3</span> Commit the receipt and verify it in CI</h3>
+        <pre><code>git add gpu-proof.json
+git commit -m "Record local GPU test receipt"</code></pre>
+        <p>After checking out the repository and installing the plugin on your CPU runner, add this verification step.</p>
+        <pre><code>- name: Verify local GPU test receipt
+  run: gpu-proof verify --receipt gpu-proof.json --repo .</code></pre>
+      </article>
+    </div>
+    <p class="note">Verification rejects failed tests and, by default, skipped tests. Source mismatches and stale receipts fail verification rather than silently reusing old results.</p>
+    <p><a class="text-link" href="docs/quickstart/">Follow the complete quickstart →</a><a class="text-link" href="docs/policy/">Configure repository policy →</a></p>
+  </section>
+
+  <section id="trust" class="trust" aria-labelledby="trust-title">
+    <div class="eyebrow">The trust model</div>
+    <h2 id="trust-title">A signed statement, not proof of GPU execution.</h2>
+    <p>A receipt authenticates a signer’s statement about a test run. It does not prove that a GPU executed the tests or that the signing machine was trustworthy.</p>
+    <p>Verification checks the signature against the signer’s current public SSH keys on GitHub, checks the source fingerprint and recorded outcomes, and applies repository policy. Open mode accepts any valid GitHub signer by default. Restricted mode adds user or key allowlists.</p>
+    <p>Receipts support accountable review and catch stale results. They do not replace test quality, pull-request review, or controlled GPU CI when a local signer cannot be trusted.</p>
+    <a href="docs/security_model/">Read the full security model →</a>
+  </section>
+
+  <section id="paper" aria-labelledby="paper-title">
+    <div class="eyebrow">Paper</div>
+    <h2 id="paper-title">The motivation and design.</h2>
+    <p class="paper-title">pytest-gpu-proof: Enabling Cloud-CPU Continuous Integration for GPU Code with Local GPU Attestation</p>
+    <p class="byline"><a href="https://brianplancher.com/">Brian Plancher</a> · Dartmouth College · 2026</p>
+    <p>The two-page workshop extended abstract introduces the local-run workflow, source-bound receipts, and the trust model behind CPU-only verification.</p>
+    <div class="links paper-links"><a class="button" href="landing/workshop-abstract.pdf">Workshop abstract PDF</a><span class="pending">arXiv forthcoming</span></div>
+    <p class="note" id="arxiv-status">The arXiv link and citation will be added when the preprint is available.</p>
+    <details><summary>Cite the workshop abstract</summary>
+      <pre><code id="bibtex">@misc{plancher2026pytestgpuproof,
+  title={pytest-gpu-proof: Enabling Cloud-CPU Continuous Integration for GPU Code with Local GPU Attestation},
+  author={Brian Plancher},
+  year={2026},
+  note={Workshop extended abstract},
+  url={https://a2r-lab.org/pytest-gpu-proof/landing/workshop-abstract.pdf}
+}</code></pre>
+      <button class="button" type="button" id="copy-citation">Copy BibTeX</button><span id="copy-status" class="note" role="status" aria-live="polite"></span>
+    </details>
+  </section>
+</main>
+<footer><div class="container">
+  <p><a href="https://a2r-lab.org/">A²R Lab</a> · <a href="https://github.com/A2R-Lab/pytest-gpu-proof">GitHub</a> · <a href="docs/">Documentation</a> · <a href="https://a2r-lab.org/GLASS/">GLASS</a></p>
+  <p>Supported by the National Science Foundation (Award 2411369) and the Toyota Research Institute. The author’s views do not necessarily reflect those of the funding organizations.</p>
+  <p>Page design adapted from <a href="https://a2r-lab.org/GLASS/">GLASS</a>, <a href="https://a2r-lab.org/GATO/">GATO</a>, and <a href="https://github.com/nerfies/nerfies.github.io">Nerfies</a> under <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>. The plugin is <a href="https://github.com/A2R-Lab/pytest-gpu-proof/blob/main/LICENSE">MIT licensed</a>.</p>
+</div></footer>
+</body>
+</html>

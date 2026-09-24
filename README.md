@@ -1,12 +1,16 @@
 # pytest-gpu-proof
 
 [![CI](https://github.com/A2R-Lab/pytest-gpu-proof/actions/workflows/ci.yml/badge.svg)](https://github.com/A2R-Lab/pytest-gpu-proof/actions/workflows/ci.yml)
-[![Docs](https://github.com/A2R-Lab/pytest-gpu-proof/actions/workflows/docs.yml/badge.svg)](https://a2r-lab.github.io/pytest-gpu-proof/)
+[![Docs](https://github.com/A2R-Lab/pytest-gpu-proof/actions/workflows/docs.yml/badge.svg)](https://a2r-lab.org/pytest-gpu-proof/docs/)
 [![PyPI](https://img.shields.io/pypi/v/pytest-gpu-proof.svg)](https://pypi.org/project/pytest-gpu-proof/)
 [![Python](https://img.shields.io/pypi/pyversions/pytest-gpu-proof.svg)](https://pypi.org/project/pytest-gpu-proof/)
 [![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](https://github.com/A2R-Lab/pytest-gpu-proof/actions/workflows/ci.yml)
 
 Signed pytest receipts for local GPU runs, verified in CPU-only CI.
+
+[Project overview](https://a2r-lab.org/pytest-gpu-proof/) ·
+[Documentation](https://a2r-lab.org/pytest-gpu-proof/docs/) ·
+[Website preview instructions](website/README.md)
 
 `pytest-gpu-proof` records which marked tests ran, their outcomes, the Git
 commit and source fingerprint, the environment, and the run time. It signs

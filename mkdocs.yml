@@ -1,4 +1,5 @@
 site_name: pytest-gpu-proof
+site_url: https://a2r-lab.org/pytest-gpu-proof/docs/
 site_description: >-
   pytest plugin for GPU equivalence testing with signed receipts verified via
   GitHub SSH keys
@@ -7,6 +8,7 @@ repo_name: A2R-Lab/pytest-gpu-proof
 
 theme:
   name: material
+  custom_dir: website/overrides
   palette:
     - scheme: default
       primary: indigo

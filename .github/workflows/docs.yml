@@ -3,12 +3,22 @@ name: Docs
 on:
   push:
     branches: [main]
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'website/**'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs.yml'
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,13 +27,43 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install mkdocs
-        run: pip install mkdocs-material
+      - name: Install website dependencies
+        run: pip install -r website/requirements.txt
 
+      - name: Build and check the complete website
+        run: python website/build_site.py
+
+      - name: Test website checks
+        run: python -m unittest discover -s website -p 'test_*.py'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: website-preview
+          path: build/website
+          include-hidden-files: true
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r website/requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: website-preview
+          path: build/website
       - name: Configure git author
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Deploy to gh-pages
-        run: mkdocs gh-deploy --force
+        run: ghp-import --no-jekyll --push --branch gh-pages build/website
