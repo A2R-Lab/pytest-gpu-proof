@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="830" viewBox="0 0 440 830" role="img" aria-labelledby="title desc">
+  <title id="title">Local GPU testing with CPU-only verification</title>
+  <desc id="desc">Run, record, and sign on local hardware. Commit gpu-proof.json. CPU-only CI verifies the signature, source, outcomes, and repository policy. The local run is attested by the signer, not independently proven.</desc>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#607083"/></marker></defs>
+  <rect width="440" height="830" rx="12" fill="#fff"/>
+  <g font-family="Arial, sans-serif" fill="#1a1d25">
+    <rect x="20" y="20" width="400" height="318" rx="12" fill="#fff7ee" stroke="#bb6b32" stroke-dasharray="6 5" stroke-width="1.5"/>
+    <text x="44" y="52" fill="#925126" font-size="14" font-weight="700" letter-spacing="1">LOCAL OR LAB GPU</text>
+    <text x="44" y="88" font-size="25" font-weight="700">Run, record, and sign</text>
+    <text x="44" y="133" font-size="20" font-weight="700">1  Run marked pytest tests</text>
+    <text x="68" y="158" font-size="18" fill="#4b5060">Keep your numerical assertions.</text>
+    <text x="44" y="198" font-size="20" font-weight="700">2  Record the code and results</text>
+    <text x="68" y="223" font-size="18" fill="#4b5060">Fingerprint, tests, outcomes, time.</text>
+    <text x="44" y="263" font-size="20" font-weight="700">3  Sign with an SSH key</text>
+    <text x="68" y="288" font-size="18" fill="#4b5060">Attest to this run and source state.</text>
+    <text x="44" y="318" font-size="15" fill="#925126">Trust boundary · self-reported by the signer</text>
+    <path d="M220 340V373" stroke="#607083" stroke-width="2" marker-end="url(#arrow)"/>
+    <rect x="80" y="380" width="280" height="89" rx="12" fill="#f2eff9" stroke="#c4b8dd"/>
+    <text x="220" y="409" text-anchor="middle" font-size="14" font-weight="700" fill="#675584" letter-spacing="1">COMMIT THE RECEIPT</text>
+    <text x="220" y="443" text-anchor="middle" font-family="monospace" font-size="23" font-weight="700">gpu-proof.json</text>
+    <path d="M220 472V506" stroke="#607083" stroke-width="2" marker-end="url(#arrow)"/>
+    <rect x="20" y="512" width="400" height="298" rx="12" fill="#eaf3ef" stroke="#b7d6c8"/>
+    <text x="44" y="544" fill="#087c58" font-size="14" font-weight="700" letter-spacing="1">CPU-ONLY CI</text>
+    <text x="44" y="580" font-size="25" font-weight="700">Verify on each CI run</text>
+    <text x="44" y="624" font-size="20" font-weight="700">Signature and signer</text>
+    <text x="44" y="649" font-size="18" fill="#4b5060">Current public SSH keys on GitHub.</text>
+    <text x="44" y="689" font-size="20" font-weight="700">Source and outcomes</text>
+    <text x="44" y="714" font-size="18" fill="#4b5060">Fingerprint, ancestry, tests, skips.</text>
+    <text x="44" y="754" font-size="20" font-weight="700">Repository policy</text>
+    <text x="44" y="779" font-size="18" fill="#4b5060">Freshness, source scope, signer rules.</text>
+  </g>
+</svg>
