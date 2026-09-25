@@ -3,10 +3,8 @@
   "source_commit": "082130df103c7927798b44a8e39350ed5bad7fe3",
   "source_file": "workshop_main.tex",
   "source_sha256": "d9767a5e75c4cb1e1c1d94db1b82c0a24e69a692a5f3d6aa8cd1af0defba932e",
-  "bibliography_file": "workshop_main.bbl",
-  "bibliography_sha256": "d2060cefddb44723368feb9dce04bc12df8ed0a34b6dda7223e3108edf1a165c",
-  "pdf_sha256": "7066df9f6aa9607c873bf696d8390c77ddc55eea3284ff1bd317914d4c8ffa68",
-  "pdf_build": "latexmk -pdf -interaction=nonstopmode -halt-on-error -outdir=<temporary-directory> workshop_main.tex",
+  "arxiv_id": "2609.28862",
+  "paper_url": "https://arxiv.org/abs/2609.28862",
   "figure": "workflow.svg and workflow-mobile.svg adapt Figure 1 for the web. SSH signing replaces the narrower Ed25519 label, and the trust boundary is retained.",
-  "release_status": "Workshop extended abstract; arXiv forthcoming. No acceptance or arXiv identifier is asserted."
+  "release_status": "Paper hosted on arXiv. No local PDF is stored or distributed."
 }

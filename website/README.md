@@ -35,7 +35,7 @@ python -m http.server 8000 --bind 127.0.0.1 --directory "$preview_dir"
 Open `http://localhost:8000/pytest-gpu-proof/` for the cover and
 `http://localhost:8000/pytest-gpu-proof/docs/` for documentation.
 Stop with Ctrl+C. The builder performs a strict MkDocs build and checks links,
-fragments, redirects, and the abstract hash. It refuses an existing output
+fragments, redirects, and arXiv references. It refuses an existing output
 directory, so use a fresh `preview_dir` after each pull. It does not modify the
 generated `site/` directory. Relative paths also work at the repository URL prefix.
 
@@ -61,25 +61,22 @@ Website regression checks can be run with
 
 ## Paper and figure provenance
 
-`workshop-abstract.pdf` is compiled from the unchanged `workshop_main.tex` in
-the original `glass-paper` repository. `provenance.json` records the source
-commit, source/bibliography hashes, and compiled PDF hash. Both PDF pages were
-rendered and visually checked. The page does not imply workshop acceptance.
+The paper is hosted on [arXiv](https://arxiv.org/abs/2609.28862). The cover,
+resource buttons, PDF link, citation, and metadata all point there. No local
+copy of the abstract is stored or distributed with the site.
 
-The desktop and mobile SVGs adapt its single TikZ figure. They use the current
+The desktop and mobile SVGs adapt the single TikZ figure in `workshop_main.tex`
+from the original `glass-paper` repository. `provenance.json` retains that source
+commit and hash alongside the arXiv identifier. The SVGs use the current
 tool's broader SSH-signing terminology and preserve the signer trust boundary.
 The web text follows the current README and security model where these are more
 precise than the workshop summary. The source repository was not changed.
 
-## When arXiv is available
+## Updating the paper link
 
-The hero has a small release label, and the paper section reserves a resource
-slot without a fake or disabled link. In `index.html`, update together:
-
-1. Both “arXiv forthcoming” labels and `#arxiv-status`.
-2. The paper resource link and BibTeX (identifier, archive, URL).
-3. Citation metadata, including the actual arXiv identifier and PDF URL.
-4. `provenance.json` release status; refresh the PDF only if adopting a new version.
+The links use the version-independent arXiv URL. If the identifier changes,
+update the hero, figure link, paper resource links, BibTeX, and citation metadata
+in `index.html` together with `provenance.json`. Keep downloads hosted on arXiv.
 
 ## Design attribution
 

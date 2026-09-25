@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Check rendered links, fragments, legacy redirects, and abstract provenance."""
-import hashlib
+"""Check rendered links, fragments, legacy redirects, and arXiv references."""
 import json
 import sys
 from html.parser import HTMLParser
@@ -13,10 +12,13 @@ class Page(HTMLParser):
         super().__init__()
         self.links = []
         self.ids = set()
+        self.metadata = {}
         self.feed(source)
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
+        if tag == "meta" and "name" in attrs:
+            self.metadata[attrs["name"]] = attrs.get("content", "")
         if "id" in attrs:
             self.ids.add(attrs["id"])
         for key in ("href", "src"):
@@ -60,15 +62,28 @@ def check(root):
                    for link in pages[legacy.resolve()].links):
             errors.append(f"Legacy redirect target mismatch: {rel}")
     manifest = json.loads((root / "landing" / "provenance.json").read_text())
-    digest = hashlib.sha256((root / "landing" / "workshop-abstract.pdf").read_bytes()).hexdigest()
-    if digest != manifest["pdf_sha256"]:
-        errors.append("Workshop abstract does not match the provenance manifest")
+    cover_page = pages[(root / "index.html").resolve()]
+    paper_url = manifest["paper_url"]
+    expected_metadata = {
+        "citation_arxiv_id": manifest["arxiv_id"],
+        "citation_abstract_html_url": paper_url,
+        "citation_pdf_url": paper_url.replace("/abs/", "/pdf/"),
+    }
+    for key, value in expected_metadata.items():
+        if cover_page.metadata.get(key) != value:
+            errors.append(f"arXiv metadata mismatch: {key}")
+    if paper_url not in cover_page.links:
+        errors.append("arXiv paper link is missing")
     cover = (root / "index.html").read_text(encoding="utf-8")
-    if 'id="arxiv-status"' not in cover:
-        errors.append("Paper release status is missing")
+    if f'eprint={{{manifest["arxiv_id"]}}}' not in cover or f'url={{{paper_url}}}' not in cover:
+        errors.append("arXiv citation mismatch")
+    if "arXiv forthcoming" in cover:
+        errors.append("Stale arXiv placeholder")
+    if (root / "landing" / "workshop-abstract.pdf").exists() or "workshop-abstract.pdf" in cover:
+        errors.append("Local abstract PDF must not be distributed or linked")
     if errors:
         raise SystemExit("\n".join(errors))
-    print(f"PASS: {len(pages)} HTML pages; local links, fragments, redirects, and PDF hash")
+    print(f"PASS: {len(pages)} HTML pages; local links, fragments, redirects, and arXiv references")
 
 
 if __name__ == "__main__":

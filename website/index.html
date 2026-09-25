@@ -14,8 +14,10 @@
   <meta property="og:url" content="https://a2r-lab.org/pytest-gpu-proof/">
   <meta name="citation_title" content="pytest-gpu-proof: Enabling Cloud-CPU Continuous Integration for GPU Code with Local GPU Attestation">
   <meta name="citation_author" content="Plancher, Brian">
-  <meta name="citation_publication_date" content="2026">
-  <meta name="citation_pdf_url" content="https://a2r-lab.org/pytest-gpu-proof/landing/workshop-abstract.pdf">
+  <meta name="citation_publication_date" content="2026/09/24">
+  <meta name="citation_arxiv_id" content="2609.28862">
+  <meta name="citation_abstract_html_url" content="https://arxiv.org/abs/2609.28862">
+  <meta name="citation_pdf_url" content="https://arxiv.org/pdf/2609.28862">
   <link rel="icon" href="landing/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -41,7 +43,7 @@
       <a class="button" href="https://github.com/A2R-Lab/pytest-gpu-proof">GitHub ↗</a>
       <a class="button" href="https://pypi.org/project/pytest-gpu-proof/">PyPI ↗</a>
     </div>
-    <p class="paper-shortcut"><a href="#paper">Workshop abstract</a><span aria-hidden="true"> · </span><span>arXiv forthcoming</span></p>
+    <p class="paper-shortcut"><a href="https://arxiv.org/abs/2609.28862">Read the paper on arXiv ↗</a></p>
   </section>
 
   <section id="workflow" aria-labelledby="workflow-title">
@@ -49,8 +51,8 @@
     <h2 id="workflow-title">Keep the GPU run local. Make the results checkable.</h2>
     <figure>
       <picture><source media="(max-width:720px)" srcset="landing/workflow-mobile.svg" width="440" height="830"><img class="workflow-figure" src="landing/workflow.svg" width="1040" height="398" alt="On a local GPU, run marked pytest tests, record the source fingerprint and outcomes, and sign a receipt with an SSH key. Commit gpu-proof.json. CPU-only CI verifies the signature, source match, outcomes, and repository policy. The local run and its metadata are attested by the signer, not independently proven."></picture>
-      <figcaption>Adapted from the workshop abstract. Rerun affected GPU tests when fingerprinted inputs change or repository policy requires fresh results. Verification checks the receipt without rerunning the GPU computation.</figcaption>
-      <div class="figure-links"><a href="landing/workflow.svg">Enlarge workflow</a><a href="landing/workshop-abstract.pdf">Workshop abstract PDF</a></div>
+      <figcaption>Adapted from the paper’s workflow figure. Rerun affected GPU tests when fingerprinted inputs change or repository policy requires fresh results. Verification checks the receipt without rerunning the GPU computation.</figcaption>
+      <div class="figure-links"><a href="landing/workflow.svg">Enlarge workflow</a><a href="https://arxiv.org/abs/2609.28862">Paper on arXiv</a></div>
     </figure>
     <div class="benefits">
       <article class="card"><h3>Use the GPUs you already have</h3><p>Run marked pytest tests on local or lab hardware and bring the results into ordinary CI.</p></article>
@@ -100,16 +102,17 @@ git commit -m "Record local GPU test receipt"</code></pre>
     <h2 id="paper-title">The motivation and design.</h2>
     <p class="paper-title">pytest-gpu-proof: Enabling Cloud-CPU Continuous Integration for GPU Code with Local GPU Attestation</p>
     <p class="byline"><a href="https://brianplancher.com/">Brian Plancher</a> · Dartmouth College · 2026</p>
-    <p>The two-page workshop extended abstract introduces the local-run workflow, source-bound receipts, and the trust model behind CPU-only verification.</p>
-    <div class="links paper-links"><a class="button" href="landing/workshop-abstract.pdf">Workshop abstract PDF</a><span class="pending">arXiv forthcoming</span></div>
-    <p class="note" id="arxiv-status">The arXiv link and citation will be added when the preprint is available.</p>
-    <details><summary>Cite the workshop abstract</summary>
+    <p>The two-page paper introduces the local-run workflow, source-bound receipts, and the trust model behind CPU-only verification.</p>
+    <div class="links paper-links"><a class="button" href="https://arxiv.org/abs/2609.28862">Read on arXiv ↗</a><a class="button" href="https://arxiv.org/pdf/2609.28862">PDF on arXiv ↗</a></div>
+    <details><summary>Cite the paper</summary>
       <pre><code id="bibtex">@misc{plancher2026pytestgpuproof,
   title={pytest-gpu-proof: Enabling Cloud-CPU Continuous Integration for GPU Code with Local GPU Attestation},
   author={Brian Plancher},
   year={2026},
-  note={Workshop extended abstract},
-  url={https://a2r-lab.org/pytest-gpu-proof/landing/workshop-abstract.pdf}
+  eprint={2609.28862},
+  archivePrefix={arXiv},
+  primaryClass={cs.DC},
+  url={https://arxiv.org/abs/2609.28862}
 }</code></pre>
       <button class="button" type="button" id="copy-citation">Copy BibTeX</button><span id="copy-status" class="note" role="status" aria-live="polite"></span>
     </details>

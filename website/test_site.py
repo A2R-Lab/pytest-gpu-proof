@@ -49,9 +49,21 @@ class WebsiteTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "missing anchor"):
             check(self.site)
 
-    def test_changed_paper_fails(self):
-        (self.site / "landing" / "workshop-abstract.pdf").write_bytes(b"not the paper")
-        with self.assertRaisesRegex(SystemExit, "provenance manifest"):
+    def test_local_paper_is_not_distributed(self):
+        (self.site / "landing" / "workshop-abstract.pdf").write_bytes(b"unwanted local paper")
+        with self.assertRaisesRegex(SystemExit, "Local abstract PDF"):
+            check(self.site)
+
+    def test_inconsistent_arxiv_metadata_fails(self):
+        index = self.site / "index.html"
+        index.write_text(index.read_text().replace('content="2609.28862"', 'content="wrong"'))
+        with self.assertRaisesRegex(SystemExit, "arXiv metadata mismatch"):
+            check(self.site)
+
+    def test_stale_citation_fails(self):
+        index = self.site / "index.html"
+        index.write_text(index.read_text().replace('eprint={2609.28862}', 'note={forthcoming}'))
+        with self.assertRaisesRegex(SystemExit, "arXiv citation mismatch"):
             check(self.site)
 
     def test_legacy_query_and_fragment_guard(self):

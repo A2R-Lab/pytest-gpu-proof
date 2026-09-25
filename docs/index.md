@@ -1,7 +1,7 @@
 # pytest-gpu-proof
 
 This is the code documentation. Use the project-overview link above for the
-workflow figure, workshop abstract, and introduction to the tool.
+workflow figure, paper, and introduction to the tool.
 
 **Signed pytest receipts for local GPU runs, verified in CPU-only CI.**
 

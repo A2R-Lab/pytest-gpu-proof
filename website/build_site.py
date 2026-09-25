@@ -15,7 +15,7 @@ from urllib.parse import quote
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_URL = "https://a2r-lab.org/pytest-gpu-proof/"
 ASSETS = ("style.css", "main.js", "favicon.svg", "workflow.svg",
-          "workflow-mobile.svg", "workshop-abstract.pdf", "provenance.json")
+          "workflow-mobile.svg", "provenance.json")
 
 
 def redirect_page(target, canonical):

@@ -50,7 +50,6 @@ pre code { font-size:inherit; overflow-wrap:normal; }
 .trust { background:#eaf3ef; border-left:3px solid var(--accent); padding:1.5rem 1.7rem; border-radius:0 12px 12px 0; }
 .paper-title { font-family:var(--serif); font-size:1.25rem; line-height:1.4; max-width:850px; }
 .paper-links { justify-content:flex-start; }
-.pending { padding:.55rem .9rem; border:1px dashed #a6afbb; border-radius:8px; color:var(--dim); font-size:.85rem; }
 details { margin:1rem 0; }
 summary { cursor:pointer; color:var(--accent); font-weight:600; }
 #copy-status { margin-left:1rem; }
