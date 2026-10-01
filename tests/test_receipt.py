@@ -93,6 +93,9 @@ def test_environment_and_gpu_capture(monkeypatch):
     assert info["cuda_visible_devices"] == "1"
     assert _env_info()["gpu_info"] == info
     assert _utcnow().endswith("Z")
+    anonymous = _env_info(record_gpu_uuid=False)["gpu_info"]
+    assert all(d["uuid"] is None for d in anonymous["devices"])
+    assert [d["name"] for d in anonymous["devices"]] == [d["name"] for d in info["devices"]]
 
 
 @pytest.mark.parametrize(

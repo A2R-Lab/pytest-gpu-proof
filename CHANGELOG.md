@@ -4,6 +4,14 @@ All notable changes to pytest-gpu-proof are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/) (pre-1.0: minor bumps may break).
 
+## [Unreleased]
+
+### Added
+
+- `record_gpu_uuid` (`[tool.gpu_proof]`, default `true`): set `false` to omit each GPU's
+  nvidia-smi UUID from the receipt environment while keeping name, driver, memory and
+  compute capability. Verification does not read the UUID.
+
 ## [0.4.0] — 2026-08-17
 
 ### Added

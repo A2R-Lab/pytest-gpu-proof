@@ -28,7 +28,7 @@ def _utcnow() -> str:
     return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _gpu_info() -> Optional[Dict[str, Any]]:
+def _gpu_info(include_uuid: bool = True) -> Optional[Dict[str, Any]]:
     try:
         result = subprocess.run(
             [
@@ -50,7 +50,7 @@ def _gpu_info() -> Optional[Dict[str, Any]]:
         devices.append(
             {
                 "index": parts[0] if len(parts) > 0 else None,
-                "uuid": parts[1] if len(parts) > 1 else None,
+                "uuid": parts[1] if include_uuid and len(parts) > 1 else None,
                 "name": parts[2] if len(parts) > 2 else None,
                 "driver_version": parts[3] if len(parts) > 3 else None,
                 "memory": parts[4] if len(parts) > 4 else None,
@@ -63,7 +63,7 @@ def _gpu_info() -> Optional[Dict[str, Any]]:
     }
 
 
-def _env_info() -> Dict[str, Any]:
+def _env_info(record_gpu_uuid: bool = True) -> Dict[str, Any]:
     import pytest
 
     from pytest_gpu_proof import __version__
@@ -73,7 +73,7 @@ def _env_info() -> Dict[str, Any]:
         "platform": platform.platform(),
         "pytest_version": pytest.__version__,
         "plugin_version": __version__,
-        "gpu_info": _gpu_info(),
+        "gpu_info": _gpu_info(include_uuid=record_gpu_uuid),
     }
 
 
@@ -160,7 +160,7 @@ def build_receipt_payload(
             "pytest_args": list(config.invocation_args),
         },
         "tests": test_results,
-        "environment": _env_info(),
+        "environment": _env_info(getattr(config, "record_gpu_uuid", True)),
     }
 
     if config.shard_name:

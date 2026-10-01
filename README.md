@@ -163,6 +163,7 @@ fingerprint_excluded_paths = ["gpu-proof.json"]
 required_marker = "gpu_proof"
 max_age_days = 30
 require_gpu = true
+record_gpu_uuid = false   # keep device name/driver/memory, omit the card's UUID
 ```
 
 By default, the fingerprint covers every tracked file in the repository,

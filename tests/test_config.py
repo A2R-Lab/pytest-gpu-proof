@@ -21,6 +21,7 @@ def test_dataclass_defaults_are_safe():
     first.fingerprint_paths.append("x")
     assert second.fingerprint_paths == ["."]
     assert second.best_effort is False
+    assert second.record_gpu_uuid is True
 
 
 def test_load_toml_defaults_absent_invalid_and_non_table(tmp_path):
@@ -104,3 +105,19 @@ def test_explicit_empty_fingerprint_exclusions(tmp_path):
         "[tool.gpu_proof]\nfingerprint_excluded_paths = []\n"
     )
     assert load_config(FakeConfig(tmp_path)).fingerprint_excluded_paths == []
+
+
+def test_record_gpu_uuid_from_toml(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[tool.gpu_proof]\nrecord_gpu_uuid = false\n")
+    config = load_config(
+        FakeConfig(
+            tmp_path,
+            {
+                "--gpu-proof-fingerprint-paths": None,
+                "--gpu-proof-shard-fingerprint-paths": None,
+                "--gpu-proof-fail-on-skip": False,
+                "--gpu-proof-best-effort": False,
+            },
+        )
+    )
+    assert config.record_gpu_uuid is False
