@@ -535,6 +535,12 @@ def _verify_shards(receipt: dict, root: str, policy: dict) -> None:
                 raise VerificationError(f"shard {name!r} is carried but policy rejects carry-forward")
             if not isinstance(carried, dict):
                 raise VerificationError(f"shard {name!r} carried metadata is invalid")
+            # A shard carried from a dirty recording (merge >= 0.4.1 refuses
+            # to create one; an older or hand-edited receipt could still say
+            # so) is dirty evidence; the merged repo.dirty does not cover it.
+            if carried.get("original_dirty") and not policy.get("allow_dirty", False):
+                raise VerificationError(
+                    f"carried shard {name!r} was recorded with a dirty working tree")
             original = _parse_time(carried.get("original_ended_at"), f"shard {name}.original_ended_at")
             age = datetime.datetime.now(datetime.UTC) - original
             limit = policy.get("carried_max_age_days", 30)

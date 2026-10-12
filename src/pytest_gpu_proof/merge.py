@@ -181,7 +181,12 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
       1. the old receipt is schema '2' and its commit is an ANCESTOR of the
          fresh payload's commit (same history, older point);
       2. the shard's narrow fingerprint recomputes IDENTICAL against the
-         current tree — the inputs that shard proved are unchanged at HEAD.
+         current tree — the inputs that shard proved are unchanged at HEAD;
+      3. the old receipt was recorded with a CLEAN tree (its `repo.dirty` is
+         false) — a dirty recording may have exercised uncommitted bytes
+         outside the shard's narrow fingerprint, and the merged `repo.dirty`
+         covers fresh inputs only. The carried metadata records
+         ``original_dirty`` so the verifier can refuse it independently.
 
     Shard signatures are provenance (merge is offline); the re-signed merged
     receipt is the attestation, and the verifier re-checks every carried
@@ -199,6 +204,15 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
         raise MergeError(
             f"--carry-from {old_source}: its commit {old_sha[:12]} is not an "
             f"ancestor of {new_sha[:12]} — different history, cannot carry.")
+    # A receipt recorded with a dirty tree attests to unknown bytes: its shards
+    # ran against uncommitted edits that may lie OUTSIDE their narrow
+    # fingerprints, so a digest match at HEAD proves nothing. The merged
+    # receipt's `repo.dirty` is OR-ed over the FRESH inputs only, so carrying
+    # such a shard would launder it into a clean-looking descendant. Refuse.
+    if old_receipt.get("repo", {}).get("dirty"):
+        raise MergeError(
+            f"--carry-from {old_source}: that receipt was recorded with a dirty "
+            f"working tree; its shards cannot be carried — re-run them.")
 
     fresh_names = {s.get("name") for s in payload.get("shards") or []}
     fresh_ids = {t.get("node_id") for t in payload.get("tests", [])}
@@ -230,6 +244,7 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
         grafted["carried"] = {
             "from": old_source.rsplit("/", 1)[-1],
             "original_commit_sha": old_sha,
+            "original_dirty": False,
             "original_ended_at": old_receipt.get("session", {}).get("ended_at"),
             "original_signer": (
                 (old_receipt.get("signer") or {}).get("github_user")

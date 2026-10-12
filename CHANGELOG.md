@@ -6,6 +6,15 @@ based on [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ## [Unreleased]
 
+### Fixed
+
+- `gpu-proof merge --carry-from` refuses a source receipt recorded with a dirty
+  working tree. The merged `repo.dirty` is OR-ed over the fresh inputs only, so a
+  carried shard from a dirty recording was laundered into a clean-looking merged
+  receipt (found by GRiD's split driver, 2026-10-10). Carried shards now record
+  `carried.original_dirty`, and verification refuses a carried shard recorded
+  dirty unless `allow_dirty` is set.
+
 ### Added
 
 - `record_gpu_uuid` (`[tool.gpu_proof]`, default `true`): set `false` to omit each GPU's

@@ -55,8 +55,14 @@ An absent old shard is carried only when:
 1. its receipt commit is the current commit or an ancestor;
 2. its stored narrow manifest—including explicit extra paths—recomputes
    identically at the current tree;
-3. it does not duplicate a fresh node ID;
-4. every claimed node ID exists in the old tests list.
+3. its receipt was recorded with a clean working tree (`repo.dirty` false): a
+   dirty recording may have exercised uncommitted bytes outside the shard's
+   narrow manifest, and the merged `repo.dirty` covers fresh inputs only;
+4. it does not duplicate a fresh node ID;
+5. every claimed node ID exists in the old tests list.
+
+Each carried shard records `carried.original_dirty`; verification refuses a
+carried shard recorded dirty unless `allow_dirty` is set.
 
 Freshly rerun shards always win. Changed or malformed scopes require a rerun.
 

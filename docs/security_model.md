@@ -98,8 +98,10 @@ each input signature. The merger's signature attests to the union. A review
 workflow that needs independent shard authentication should verify every
 input before merging.
 
-Carry-forward means a test passed at an ancestor commit and its declared shard
-inputs are byte-identical now. It does not establish that omitted dependencies
+Carry-forward means a test passed at an ancestor commit, with a clean working
+tree, and its declared shard inputs are byte-identical now. A receipt recorded
+dirty is never a carry source: the merged `repo.dirty` is computed from fresh
+inputs only, so carrying from it would launder the dirty flag. It does not establish that omitted dependencies
 or the old environment remain equivalent. Carried shards are rejected unless
 policy opts in and bounds their original age.
 
