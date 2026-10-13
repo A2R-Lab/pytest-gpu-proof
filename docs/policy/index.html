@@ -751,7 +751,7 @@ schema 3. Repositories that have finished migrating should pin
 </tr>
 <tr>
 <td><code>require_mode</code></td>
-<td>Required receipt mode: <code>local</code> or <code>ci-gpu</code></td>
+<td>Required receipt mode: <code>local</code> or <code>ci-gpu</code> (a <code>ci-gpu</code> receipt additionally requires <code>allowed_key_fingerprints</code> and must be signed by a listed key)</td>
 </tr>
 <tr>
 <td><code>allow_dirty</code></td>
@@ -783,7 +783,7 @@ schema 3. Repositories that have finished migrating should pin
 </tr>
 <tr>
 <td><code>carried_max_age_days</code></td>
-<td>Maximum age of each carried shard's original run</td>
+<td>Maximum age of each carried shard's original run (default: <code>max_age_days</code>, capped at 30)</td>
 </tr>
 </tbody>
 </table>

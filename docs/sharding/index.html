@@ -695,8 +695,10 @@ Session times span the inputs and schema-3 session outcome fails if any input
 session failed.</p>
 <p>The merged receipt records input source names, counts, times, and recorded
 signers, then signs the result with the merger's key. Input signatures are
-provenance, not independently verified during offline merge. The merger
-attests to the union.</p>
+provenance, not verified during an offline merge, unless <code>--verify-inputs</code> is
+passed: then every input must verify against its signer's current GitHub keys
+(unsigned inputs are refused) before the union is formed. The merger attests
+to the union either way.</p>
 <h2 id="carry-forward-unchanged-shards">Carry forward unchanged shards</h2>
 <div class="highlight"><pre><span></span><code>gpu-proof<span class="w"> </span>merge<span class="w"> </span>receipts/fresh-l1.json<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--carry-from<span class="w"> </span>last-green/gpu-proof.json<span class="w"> </span><span class="se">\</span>
@@ -708,10 +710,21 @@ attests to the union.</p>
 <li>its receipt commit is the current commit or an ancestor;</li>
 <li>its stored narrow manifest—including explicit extra paths—recomputes
    identically at the current tree;</li>
+<li>its receipt was recorded with a clean working tree (<code>repo.dirty</code> false): a
+   dirty recording may have exercised uncommitted bytes outside the shard's
+   narrow manifest, and the merged <code>repo.dirty</code> covers fresh inputs only;</li>
 <li>it does not duplicate a fresh node ID;</li>
 <li>every claimed node ID exists in the old tests list.</li>
 </ol>
-<p>Freshly rerun shards always win. Changed or malformed scopes require a rerun.</p>
+<p>Every shard entry records <code>dirty</code> (the recording tree's state), merge ORs
+shard flags into the merged <code>repo.dirty</code>, carry-forward refuses a dirty shard,
+each carried shard records <code>carried.original_dirty</code>, and verification refuses
+any dirty shard unless <code>allow_dirty</code> is set.</p>
+<p>Freshly rerun shards always win. Changed or malformed scopes require a rerun.
+<code>gpu-proof plan --receipt old.json --repo .</code> applies the same conditions as a
+dry run and reports, per shard, <code>carryable</code> or <code>stale</code> with the reason (add
+<code>--json</code> for drivers), so a partial re-run can be planned without reimplementing
+the checks.</p>
 <p>Verification rejects carried shards by default:</p>
 <div class="highlight"><pre><span></span><code><span class="nt">allow_carried</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 <span class="nt">carried_max_age_days</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">14</span>

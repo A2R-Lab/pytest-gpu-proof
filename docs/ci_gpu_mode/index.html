@@ -646,7 +646,10 @@
 <h1 id="ci-gpu-mode">CI-GPU mode</h1>
 <p>CI-GPU mode uses the same receipt and verifier but records <code>mode: ci-gpu</code>.
 Choose it when GPU tests must run on a controlled runner rather than a
-developer machine.</p>
+developer machine. The verifier binds the mode to the runner's signing key:
+a <code>ci-gpu</code> receipt verifies only when the repository policy lists
+<code>allowed_key_fingerprints</code> and the receipt was signed by one of them, so the
+label cannot be claimed by an arbitrary developer key.</p>
 <h2 id="dedicated-signing-identity">Dedicated signing identity</h2>
 <p>Create a dedicated key and register its public half on the GitHub account named
 in the receipt:</p>
