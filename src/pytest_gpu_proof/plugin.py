@@ -328,6 +328,28 @@ def pytest_addoption(parser):
         help="GitHub username of the signer (default: auto-detect from git remote)",
     )
     group.addoption(
+        "--gpu-proof-no-gpu-uuid",
+        action="store_true",
+        default=False,
+        help="Omit each GPU's nvidia-smi UUID from the receipt environment "
+        "(same as record_gpu_uuid = false in [tool.gpu_proof])",
+    )
+    group.addoption(
+        "--gpu-proof-require-gpu",
+        action="store_true",
+        default=False,
+        help="Record the repository's require_gpu intent (same as require_gpu = true "
+        "in [tool.gpu_proof]; the verifier reads it from the receipt's repo config)",
+    )
+    group.addoption(
+        "--gpu-proof-max-age-days",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Freshness horizon recorded for this run (same as max_age_days in "
+        "[tool.gpu_proof])",
+    )
+    group.addoption(
         "--gpu-proof-best-effort",
         action="store_true",
         default=False,

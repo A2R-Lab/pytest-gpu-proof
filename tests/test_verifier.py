@@ -911,3 +911,46 @@ def test_get_commit_time_handles_bad_output(tmp_git_repo, monkeypatch):
     assert gitutils.get_commit_time("0" * 40, str(tmp_git_repo)) is None
     monkeypatch.setattr(gitutils, "_git", lambda *a, **k: "not-a-number")
     assert gitutils.get_commit_time("HEAD", str(tmp_git_repo)) is None
+
+
+def test_ci_gpu_receipts_require_an_allowed_runner_key(tmp_path, tmp_git_repo, signer_with_key):
+    """C1 (2026-10-12): mode ci-gpu is bound to the signing key — the policy
+    must list the runner's key fingerprint and the receipt must be signed by it."""
+    signer, public_key = signer_with_key
+
+    def ci_mode(payload):
+        payload["mode"] = "ci-gpu"
+    path = _make_receipt(tmp_path, tmp_git_repo, signer, mutate=ci_mode)
+    policy = tmp_path / "policy.json"
+    with _mock_github_keys(public_key):
+        policy.write_text(json.dumps({"require_mode": "ci-gpu"}))
+        with pytest.raises(VerificationError, match="require a policy allowed_key_fingerprints"):
+            _verify(str(path), str(policy), str(tmp_git_repo), "testuser", None)
+        policy.write_text(json.dumps({"signer_mode": "restricted",
+                                      "allowed_key_fingerprints": ["SHA256:someone-else"]}))
+        with pytest.raises(VerificationError, match="not allowed by repository policy"):
+            _verify(str(path), str(policy), str(tmp_git_repo), "testuser", None)
+        policy.write_text(json.dumps({"allowed_key_fingerprints": [signer.key_fingerprint()]}))
+        _verify(str(path), str(policy), str(tmp_git_repo), "testuser", None)
+        # open mode with the right key listed but the receipt signed by another key
+        from pytest_gpu_proof import verify as verify_mod
+        other = tmp_path / "other"
+        other.write_text(json.dumps({"allowed_key_fingerprints": ["SHA256:x"]}))
+        with pytest.raises(VerificationError, match="not signed by an allowed runner key"):
+            _verify(str(path), str(other), str(tmp_git_repo), "testuser", None)
+
+
+def test_load_config_cli_flags_for_toml_only_options(tmp_path):
+    """C3 (2026-10-12): record_gpu_uuid / require_gpu / max_age_days are reachable
+    from the command line, with the same precedence as the other options."""
+    from pytest_gpu_proof.config import load_config
+    from tests.test_config import FakeConfig
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.gpu_proof]\nmax_age_days = 7\nrecord_gpu_uuid = true\nrequire_gpu = false\n")
+    cfg = load_config(FakeConfig(tmp_path, {"--gpu-proof-enable": True,
+                                            "--gpu-proof-no-gpu-uuid": True,
+                                            "--gpu-proof-require-gpu": True,
+                                            "--gpu-proof-max-age-days": 3}))
+    assert cfg.record_gpu_uuid is False and cfg.require_gpu is True and cfg.max_age_days == 3
+    cfg = load_config(FakeConfig(tmp_path, {"--gpu-proof-enable": True}))
+    assert cfg.record_gpu_uuid is True and cfg.require_gpu is False and cfg.max_age_days == 7

@@ -2,7 +2,10 @@
 
 CI-GPU mode uses the same receipt and verifier but records `mode: ci-gpu`.
 Choose it when GPU tests must run on a controlled runner rather than a
-developer machine.
+developer machine. The verifier binds the mode to the runner's signing key:
+a `ci-gpu` receipt verifies only when the repository policy lists
+`allowed_key_fingerprints` and the receipt was signed by one of them, so the
+label cannot be claimed by an arbitrary developer key.
 
 ## Dedicated signing identity
 

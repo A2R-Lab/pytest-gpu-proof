@@ -29,8 +29,17 @@ based on [Keep a Changelog](https://keepachangelog.com/); versions follow
   minutes before its commit existed (committer time): a cheap replay and
   forgery guard that needs no nonce.
 
+- `mode: ci-gpu` is now bound to the signing key: a ci-gpu receipt verifies
+  only when the policy lists `allowed_key_fingerprints` and the receipt was
+  signed by one of them (previously the mode was an unverified label).
+- Without an explicit `carried_max_age_days`, a carried shard's original run
+  may not be older than the receipt's `max_age_days` (was a fixed 30 days).
+
 ### Added
 
+- Command-line equivalents for the toml-only options:
+  `--gpu-proof-no-gpu-uuid`, `--gpu-proof-require-gpu`,
+  `--gpu-proof-max-age-days N`.
 - `gpu-proof plan --receipt OLD [--repo .] [--json]`: a dry run of the
   carry-forward conditions against the current tree, reporting per shard
   whether it could be carried or must be re-run (and why). Drivers that plan

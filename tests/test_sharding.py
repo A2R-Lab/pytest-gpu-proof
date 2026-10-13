@@ -611,3 +611,22 @@ def test_plan_carry_reports_each_shard(tmp_path, tmp_git_repo, signer_with_key, 
         assert e.value.code == 1
     finally:
         _sys.argv = argv
+
+
+def test_carried_age_is_clamped_to_the_receipt_age_policy(tmp_path, tmp_git_repo, signer_with_key):
+    """A5 (2026-10-12): without an explicit carried_max_age_days, a carried
+    shard may not be older than max_age_days (previously a fixed 30)."""
+    signer, public_key, key_path = signer_with_key
+    old, fresh = _carry_setup(tmp_path, tmp_git_repo, signer, old_days_ago=10)
+    out = tmp_path / "merged.json"
+    merge_receipts([str(fresh)], str(out), key_path=key_path,
+                   carry_from=str(old), repo_root=str(tmp_git_repo))
+    os.chdir(tmp_git_repo)
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError, match="outside its age policy"):
+            _verify(str(out), _policy(tmp_path, allow_carried=True, max_age_days=5),
+                    str(tmp_git_repo), "testuser", None)
+        _verify(str(out), _policy(tmp_path, allow_carried=True, max_age_days=5,
+                                  carried_max_age_days=20), str(tmp_git_repo), "testuser", None)
+        _verify(str(out), _policy(tmp_path, allow_carried=True, max_age_days=15),
+                str(tmp_git_repo), "testuser", None)
