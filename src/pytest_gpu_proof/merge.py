@@ -275,6 +275,63 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
     return payload
 
 
+def verify_input_signatures(receipts: List[dict], sources: List[str]) -> List[str]:
+    """Authenticate every input shard against GitHub keys BEFORE merging
+    (opt-in: ``gpu-proof merge --verify-inputs``). Unsigned inputs are refused;
+    returns the verified signer per input. Uses the verifier's own signature
+    path so an input shard cannot satisfy a weaker check than a receipt."""
+    from .verify import VerificationError, _verify_signature
+
+    signers = []
+    for src, r in zip(sources, receipts):
+        if not r.get("signature"):
+            raise MergeError(f"--verify-inputs: {src} is unsigned")
+        try:
+            username, _fp, _schema = _verify_signature(r, str(r.get("schema_version")), None, {})
+        except VerificationError as exc:
+            raise MergeError(f"--verify-inputs: {src}: {exc}") from exc
+        signers.append(username)
+    return signers
+
+
+def receipt_status(path: str) -> dict:
+    """One-line summary fields for ``gpu-proof status`` (never raises on a
+    malformed file: it is reported as such)."""
+    try:
+        r = load_receipt(path)
+    except MergeError as exc:
+        return {"file": os.path.basename(path), "error": str(exc)}
+    repo = r.get("repo") or {}
+    tests = r.get("tests") or []
+    shards = r.get("shards") or []
+    return {
+        "file": os.path.basename(path),
+        "schema": r.get("schema_version"),
+        "commit_sha": repo.get("commit_sha"),
+        "dirty": bool(repo.get("dirty")) or any(s.get("dirty") for s in shards),
+        "signed": bool(r.get("signature")),
+        "outcome": (r.get("session") or {}).get("outcome"),
+        "ended_at": (r.get("session") or {}).get("ended_at"),
+        "tests": len(tests),
+        "failed": sum(1 for t in tests if t.get("outcome") not in ("passed", "skipped")),
+        "skipped": sum(1 for t in tests if t.get("outcome") == "skipped"),
+        "shards": [s.get("name") for s in shards],
+        "carried": sum(1 for s in shards if s.get("carried")),
+    }
+
+
+def collect_durations(receipts: List[dict], existing: Optional[dict] = None) -> dict:
+    """Fold per-node ``duration_s`` from receipts into ``existing`` (later
+    receipts win) — the calibration input for drivers that bin-pack shards."""
+    out = dict(existing or {})
+    for r in receipts:
+        for t in r.get("tests") or []:
+            nid, dur = t.get("node_id"), t.get("duration_s")
+            if isinstance(nid, str) and isinstance(dur, (int, float)):
+                out[nid] = float(dur)
+    return out
+
+
 def plan_carry(old_receipt: dict, repo_root: str = ".") -> dict:
     """Dry run of :py:func:`carry_forward`'s soundness conditions against the
     CURRENT tree, without grafting: which shards of ``old_receipt`` could be
@@ -329,6 +386,7 @@ def merge_receipts(
     unsigned: bool = False,
     carry_from: Optional[str] = None,
     repo_root: str = ".",
+    verify_inputs: bool = False,
 ) -> dict:
     """Merge receipts at ``paths`` and write the re-signed result to ``out``.
 
@@ -340,6 +398,9 @@ def merge_receipts(
     see :py:func:`carry_forward` for the soundness conditions.
     """
     receipts = [load_receipt(p) for p in paths]
+    if verify_inputs:
+        for src, who in zip(paths, verify_input_signatures(receipts, list(paths))):
+            print(f"[gpu-proof] merge: input {src} signed by @{who}")
     payload = merge_payloads(receipts, list(paths))
     if carry_from:
         payload = carry_forward(payload, load_receipt(carry_from), carry_from,

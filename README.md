@@ -105,6 +105,11 @@ The project exposes five small interfaces:
 5. **`gpu-proof plan`** reports, before a partial re-run, which shards of an
    old receipt could still be carried and which must be re-run.
 
+Two maintenance helpers round it out: `gpu-proof status PATH...` summarizes
+receipt files (commit, dirty, signed, outcome, counts, shards), and
+`gpu-proof durations RECEIPT... --out map.json` folds per-test durations into
+a map that shard bin-packers can calibrate from.
+
 ### Markers
 
 | Marker | Meaning |

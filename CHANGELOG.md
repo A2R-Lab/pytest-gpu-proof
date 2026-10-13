@@ -37,6 +37,13 @@ based on [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ### Added
 
+- `gpu-proof merge --verify-inputs`: authenticate every input shard against
+  its signer's current GitHub keys before merging (unsigned or tampered inputs
+  are refused).
+- `gpu-proof status PATH...`: one-line summaries of receipt files or
+  directories (commit, dirty, signed, outcome, counts, shards, carried).
+- `gpu-proof durations RECEIPT... --out map.json`: fold per-test durations
+  into a JSON map for shard bin-packing.
 - Command-line equivalents for the toml-only options:
   `--gpu-proof-no-gpu-uuid`, `--gpu-proof-require-gpu`,
   `--gpu-proof-max-age-days N`.

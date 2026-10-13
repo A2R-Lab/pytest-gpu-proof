@@ -630,3 +630,68 @@ def test_carried_age_is_clamped_to_the_receipt_age_policy(tmp_path, tmp_git_repo
                                   carried_max_age_days=20), str(tmp_git_repo), "testuser", None)
         _verify(str(out), _policy(tmp_path, allow_carried=True, max_age_days=15),
                 str(tmp_git_repo), "testuser", None)
+
+
+def test_merge_verify_inputs_authenticates_every_shard(tmp_path, tmp_git_repo, signer_with_key, capsys):
+    """A2 (2026-10-12): --verify-inputs refuses unsigned or unverifiable inputs
+    and names the signer of each verified one."""
+    from pytest_gpu_proof.merge import verify_input_signatures
+    signer, public_key, key_path = signer_with_key
+    a = _shard_receipt(tmp_path, tmp_git_repo, signer, "a.json", "modA", ["src"], [_result("t::a")])
+    b = _shard_receipt(tmp_path, tmp_git_repo, signer, "b.json", "modB", ["tests"], [_result("t::b")])
+    out = tmp_path / "merged.json"
+    with _mock_github_keys(public_key):
+        merge_receipts([str(a), str(b)], str(out), key_path=key_path,
+                       repo_root=str(tmp_git_repo), verify_inputs=True)
+        assert capsys.readouterr().out.count("signed by @testuser") == 2
+        bad = json.loads(b.read_text())
+        bad["tests"][0]["duration_s"] = 9.0          # tamper -> signature no longer matches
+        with pytest.raises(MergeError, match="verify-inputs: b.json: signature does not match"):
+            verify_input_signatures([json.loads(a.read_text()), bad], ["a.json", "b.json"])
+        bad["signature"] = None
+        with pytest.raises(MergeError, match="b.json is unsigned"):
+            verify_input_signatures([bad], ["b.json"])
+
+
+def test_status_and_durations_subcommands(tmp_path, tmp_git_repo, signer_with_key, capsys):
+    """B3/B5 (2026-10-12): status summarizes receipt files; durations folds
+    per-test seconds into a JSON map (later receipts win)."""
+    from pytest_gpu_proof.cli import main as cli_main
+    from pytest_gpu_proof.merge import collect_durations, receipt_status
+    signer, _, _ = signer_with_key
+    rdir = tmp_path / "receipts"; rdir.mkdir()
+    a = _shard_receipt(rdir, tmp_git_repo, signer, "a.json", "modA", ["src"], [_result("t::a")])
+    (rdir / "junk.json").write_text("{}")
+    st = receipt_status(str(a))
+    assert st["shards"] == ["modA"] and st["tests"] == 1 and st["signed"] and not st["dirty"]
+    assert "error" in receipt_status(str(rdir / "junk.json"))
+    assert collect_durations([{"tests": [{"node_id": "x", "duration_s": 1}, {"node_id": "bad"}]}],
+                             {"x": 0.5, "y": 2.0}) == {"x": 1.0, "y": 2.0}
+    import sys as _sys
+    argv = _sys.argv
+    try:
+        _sys.argv = ["gpu-proof", "status", str(rdir)]
+        with pytest.raises(SystemExit) as e:
+            cli_main()
+        out = capsys.readouterr().out
+        assert e.value.code == 0 and "a.json: schema 3 @" in out and "junk.json: " in out
+        _sys.argv = ["gpu-proof", "status", str(a), "--json"]
+        with pytest.raises(SystemExit):
+            cli_main()
+        assert json.loads(capsys.readouterr().out)[0]["file"] == "a.json"
+        dmap = tmp_path / "durations.json"
+        dmap.write_text("not json")
+        _sys.argv = ["gpu-proof", "durations", str(a), "--out", str(dmap)]
+        with pytest.raises(SystemExit) as e:
+            cli_main()
+        assert e.value.code == 0 and json.loads(dmap.read_text()) == {"t::a": 0.01}
+        dmap.write_text("[]")
+        with pytest.raises(SystemExit):
+            cli_main()
+        assert json.loads(dmap.read_text()) == {"t::a": 0.01}
+        _sys.argv = ["gpu-proof", "durations", str(tmp_path / "missing.json"), "--out", str(dmap)]
+        with pytest.raises(SystemExit) as e:
+            cli_main()
+        assert e.value.code == 1
+    finally:
+        _sys.argv = argv

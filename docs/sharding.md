@@ -38,8 +38,10 @@ session failed.
 
 The merged receipt records input source names, counts, times, and recorded
 signers, then signs the result with the merger's key. Input signatures are
-provenance, not independently verified during offline merge. The merger
-attests to the union.
+provenance, not verified during an offline merge, unless `--verify-inputs` is
+passed: then every input must verify against its signer's current GitHub keys
+(unsigned inputs are refused) before the union is formed. The merger attests
+to the union either way.
 
 ## Carry forward unchanged shards
 
