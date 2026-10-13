@@ -119,7 +119,8 @@ def merge_payloads(receipts: List[dict], sources: List[str]) -> dict:
     # the first shard. `dirty` is OR-ed — one dirty shard makes the merged
     # attestation dirty, and the verifier's dirty policy then applies honestly.
     merged["repo"] = dict(receipts[0].get("repo", {}))
-    merged["repo"]["dirty"] = any(r.get("repo", {}).get("dirty") for r in receipts)
+    merged["repo"]["dirty"] = any(r.get("repo", {}).get("dirty") for r in receipts) or any(
+        shard.get("dirty") for r in receipts for shard in (r.get("shards") or []))
     # environment: fields asserted identical above; gpu_info from the first
     # shard that has one (a CPU-only shard shouldn't erase the GPU record).
     merged["environment"] = dict(receipts[0].get("environment", {}))
@@ -213,6 +214,7 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
         raise MergeError(
             f"--carry-from {old_source}: that receipt was recorded with a dirty "
             f"working tree; its shards cannot be carried — re-run them.")
+    merged_dirty = bool(payload.get("repo", {}).get("dirty"))
 
     fresh_names = {s.get("name") for s in payload.get("shards") or []}
     fresh_ids = {t.get("node_id") for t in payload.get("tests", [])}
@@ -222,6 +224,10 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
         nm = shard.get("name")
         if nm in fresh_names:
             continue  # freshly re-run — the new result wins
+        if shard.get("dirty"):
+            raise MergeError(
+                f"--carry-from {old_source}: shard {nm!r} was recorded with a dirty "
+                f"working tree; it cannot be carried — re-run it.")
         sfp = shard.get("fingerprint", {})
         try:
             snow = recompute_fingerprint(sfp, root=repo_root)
@@ -244,7 +250,7 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
         grafted["carried"] = {
             "from": old_source.rsplit("/", 1)[-1],
             "original_commit_sha": old_sha,
-            "original_dirty": False,
+            "original_dirty": bool(shard.get("dirty", False)),
             "original_ended_at": old_receipt.get("session", {}).get("ended_at"),
             "original_signer": (
                 (old_receipt.get("signer") or {}).get("github_user")
@@ -261,6 +267,7 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
             fresh_ids.add(nid)
         carried_count += 1
     payload["session"]["node_ids"] = [t["node_id"] for t in payload["tests"]]
+    payload["repo"]["dirty"] = merged_dirty  # carried shards are clean by construction
     payload["schema_version"] = str(payload.get("schema_version"))
     if not carried_count:
         print(f"[gpu-proof] merge: nothing to carry from {old_source} "

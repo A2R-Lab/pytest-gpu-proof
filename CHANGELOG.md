@@ -8,6 +8,9 @@ based on [Keep a Changelog](https://keepachangelog.com/); versions follow
 
 ### Fixed
 
+- Shard entries record `dirty` (the recording tree's state); merge ORs shard
+  flags into the merged `repo.dirty`, carry-forward refuses a dirty shard, and
+  verification refuses any dirty shard unless `allow_dirty` is set.
 - `gpu-proof merge --carry-from` refuses a source receipt recorded with a dirty
   working tree. The merged `repo.dirty` is OR-ed over the fresh inputs only, so a
   carried shard from a dirty recording was laundered into a clean-looking merged

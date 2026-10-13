@@ -529,6 +529,9 @@ def _verify_shards(receipt: dict, root: str, policy: dict) -> None:
             raise VerificationError(f"shard {name!r}: {exc}") from exc
         if current["digest"] != fingerprint.get("digest"):
             raise VerificationError(f"shard {name!r} fingerprint does not match")
+        if shard.get("dirty") and not policy.get("allow_dirty", False):
+            raise VerificationError(
+                f"shard {name!r} was recorded with a dirty working tree")
         carried = shard.get("carried")
         if carried:
             if not policy.get("allow_carried", False):

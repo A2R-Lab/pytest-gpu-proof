@@ -518,3 +518,48 @@ def test_verify_refuses_carried_shard_recorded_dirty(tmp_path, tmp_git_repo, sig
                     str(tmp_git_repo), "testuser", None)
         _verify(str(out), _policy(tmp_path, allow_carried=True, allow_dirty=True),
                 str(tmp_git_repo), "testuser", None)
+
+
+def test_shard_records_its_own_dirty_flag_and_merge_ors_it(tmp_path, tmp_git_repo, signer_with_key):
+    """A1 (2026-10-12): the recording tree's dirty state travels with the shard;
+    merging a dirty shard next to clean ones makes the merged receipt dirty
+    even when the merger only looks at shard entries."""
+    signer, _, _ = signer_with_key
+    clean = _shard_receipt(tmp_path, tmp_git_repo, signer, "clean.json", "clean", ["src"], [_result("t::c")])
+    assert json.loads(clean.read_text())["shards"][0]["dirty"] is False
+    (tmp_git_repo / "src" / "scratch.py").write_text("x = 1\n")   # untracked -> dirty
+    dirty = _shard_receipt(tmp_path, tmp_git_repo, signer, "dirty.json", "dirty", ["src"], [_result("t::d")])
+    (tmp_git_repo / "src" / "scratch.py").unlink()
+    d = json.loads(dirty.read_text())
+    assert d["repo"]["dirty"] is True and d["shards"][0]["dirty"] is True
+    # a hand-cleaned top-level flag cannot hide a dirty shard
+    d["repo"]["dirty"] = False
+    merged = merge_payloads([json.loads(clean.read_text()), d], ["clean.json", "dirty.json"])
+    assert merged["repo"]["dirty"] is True
+
+
+def test_carry_refuses_a_dirty_shard_inside_a_clean_receipt(tmp_path, tmp_git_repo, signer_with_key):
+    signer, _, _ = signer_with_key
+    old, fresh = _carry_setup(tmp_path, tmp_git_repo, signer)
+    old_r = json.loads(old.read_text())
+    for shard in old_r["shards"]:
+        shard["dirty"] = True
+    payload = merge_payloads([json.loads(fresh.read_text())], ["fresh.json"])
+    with pytest.raises(MergeError, match="shard 'modB' was recorded with a dirty"):
+        carry_forward(payload, old_r, "old", str(tmp_git_repo))
+
+
+def test_verify_refuses_dirty_shard_unless_policy_allows(tmp_path, tmp_git_repo, signer_with_key):
+    signer, public_key, key_path = signer_with_key
+    a = _shard_receipt(tmp_path, tmp_git_repo, signer, "a.json", "modA", ["src"], [_result("t::a")])
+    out = tmp_path / "merged.json"
+    merge_receipts([str(a)], str(out), key_path=key_path, repo_root=str(tmp_git_repo))
+    merged = json.loads(out.read_text())
+    merged["shards"][0]["dirty"] = True
+    merged.pop("signature", None); merged.pop("signer", None)
+    write_receipt(finalize_receipt(merged, signer), str(out))
+    os.chdir(tmp_git_repo)
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError, match="shard 'modA' was recorded with a dirty"):
+            _verify(str(out), _policy(tmp_path), str(tmp_git_repo), "testuser", None)
+        _verify(str(out), _policy(tmp_path, allow_dirty=True), str(tmp_git_repo), "testuser", None)

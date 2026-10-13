@@ -184,6 +184,10 @@ def build_receipt_payload(
                 "started_at": started_at,
                 "ended_at": ended_at,
                 "carried": None,
+                # The recording tree's state travels WITH the shard: a merge ORs
+                # these into the merged repo.dirty, so a dirty shard can never be
+                # laundered by being merged or carried next to clean ones.
+                "dirty": payload["repo"]["dirty"],
             }
         ]
     return payload

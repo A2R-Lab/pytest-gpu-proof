@@ -61,8 +61,10 @@ An absent old shard is carried only when:
 4. it does not duplicate a fresh node ID;
 5. every claimed node ID exists in the old tests list.
 
-Each carried shard records `carried.original_dirty`; verification refuses a
-carried shard recorded dirty unless `allow_dirty` is set.
+Every shard entry records `dirty` (the recording tree's state), merge ORs
+shard flags into the merged `repo.dirty`, carry-forward refuses a dirty shard,
+each carried shard records `carried.original_dirty`, and verification refuses
+any dirty shard unless `allow_dirty` is set.
 
 Freshly rerun shards always win. Changed or malformed scopes require a rerun.
 
