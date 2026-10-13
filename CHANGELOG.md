@@ -4,7 +4,7 @@ All notable changes to pytest-gpu-proof are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/) (pre-1.0: minor bumps may break).
 
-## [Unreleased]
+## [0.4.1] — 2026-10-12
 
 ### Fixed
 
