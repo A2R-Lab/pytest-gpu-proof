@@ -275,6 +275,51 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
     return payload
 
 
+def plan_carry(old_receipt: dict, repo_root: str = ".") -> dict:
+    """Dry run of :py:func:`carry_forward`'s soundness conditions against the
+    CURRENT tree, without grafting: which shards of ``old_receipt`` could be
+    carried as-is and which must be re-run, with a reason each. Drivers that
+    plan a partial re-run (which shards to execute fresh) use this instead of
+    reimplementing the checks."""
+    from .fingerprint import FingerprintError, recompute_fingerprint
+    from .gitutils import get_commit_sha
+
+    report: dict = {"receipt": {}, "shards": []}
+    schema = old_receipt.get("schema_version")
+    old_sha = (old_receipt.get("repo") or {}).get("commit_sha")
+    head = get_commit_sha(repo_root)
+    receipt_ok, why = True, "ok"
+    if schema not in ("2", "3") or not old_receipt.get("shards"):
+        receipt_ok, why = False, "not a sharded schema-2/3 receipt"
+    elif not old_sha or not head:
+        receipt_ok, why = False, "missing commit SHA"
+    elif old_sha != head and not _git_is_ancestor(repo_root, old_sha, head):
+        receipt_ok, why = False, f"commit {old_sha[:12]} is not an ancestor of HEAD {head[:12]}"
+    elif (old_receipt.get("repo") or {}).get("dirty"):
+        receipt_ok, why = False, "recorded with a dirty working tree"
+    report["receipt"] = {"commit_sha": old_sha, "head": head, "carryable": receipt_ok, "reason": why}
+    for shard in old_receipt.get("shards") or []:
+        nm = shard.get("name")
+        if not receipt_ok:
+            verdict, reason = "stale", why
+        elif shard.get("dirty"):
+            verdict, reason = "stale", "recorded with a dirty working tree"
+        else:
+            sfp = shard.get("fingerprint", {})
+            try:
+                now = recompute_fingerprint(sfp, root=repo_root)
+            except FingerprintError as exc:
+                verdict, reason = "stale", f"fingerprint invalid: {exc}"
+            else:
+                if now["digest"] == sfp.get("digest"):
+                    verdict, reason = "carryable", "fingerprint unchanged"
+                else:
+                    verdict, reason = "stale", "fingerprint changed"
+        report["shards"].append({"name": nm, "verdict": verdict, "reason": reason,
+                                 "node_count": len(shard.get("node_ids") or [])})
+    return report
+
+
 def merge_receipts(
     paths: List[str],
     out: str,

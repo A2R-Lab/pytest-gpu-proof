@@ -107,7 +107,42 @@ def main():
     mp.add_argument("--repo", default=".", metavar="PATH",
                     help="Repo root for carry-from fingerprint/ancestry checks")
 
+    # plan
+    pp = subparsers.add_parser(
+        "plan",
+        help="Dry run of carry-forward: which shards of an old receipt could be "
+             "carried against the current tree and which must be re-run",
+    )
+    pp.add_argument("--receipt", required=True, metavar="PATH",
+                    help="Older sharded receipt (the one you would --carry-from)")
+    pp.add_argument("--repo", default=".", metavar="PATH",
+                    help="Repository root for fingerprint/ancestry checks (default: .)")
+    pp.add_argument("--json", action="store_true", default=False,
+                    help="Print the plan as JSON instead of one line per shard")
+
     args = parser.parse_args()
+
+    if args.command == "plan":
+        import json
+
+        from .merge import MergeError, load_receipt, plan_carry
+
+        try:
+            report = plan_carry(load_receipt(args.receipt), repo_root=args.repo)
+        except MergeError as e:
+            print(f"gpu-proof plan: {e}", file=sys.stderr)
+            sys.exit(1)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            r = report["receipt"]
+            print(f"receipt {str(r.get('commit_sha'))[:12]} vs HEAD {str(r.get('head'))[:12]}: "
+                  f"{'carryable' if r['carryable'] else 'NOT carryable'} ({r['reason']})")
+            for s in report["shards"]:
+                print(f"  {s['verdict']:9s} {s['name']} ({s['node_count']} tests): {s['reason']}")
+            n = sum(1 for s in report["shards"] if s["verdict"] == "carryable")
+            print(f"{n}/{len(report['shards'])} shard(s) carryable")
+        sys.exit(0)
 
     if args.command == "merge":
         from .merge import MergeError, merge_receipts

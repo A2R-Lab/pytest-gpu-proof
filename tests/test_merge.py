@@ -66,9 +66,9 @@ def _mock_github_keys(public_key):
 def test_happy_merge_verifies(tmp_path, tmp_git_repo, signer_with_key):
     signer, public_key, key_path = signer_with_key
     a = _shard(tmp_path, tmp_git_repo, signer, "a.json",
-               [_result("tests/test_add.py::test_add")], started_ago=10, ended_ago=8)
+               [_result("tests/test_add.py::test_add")], started_ago=4, ended_ago=3)
     b = _shard(tmp_path, tmp_git_repo, signer, "b.json",
-               [_result("tests/test_add.py::test_sub")], started_ago=5, ended_ago=3)
+               [_result("tests/test_add.py::test_sub")], started_ago=2, ended_ago=1)
     out = tmp_path / "merged.json"
     merged = merge_receipts([str(a), str(b)], str(out), key_path=key_path)
 

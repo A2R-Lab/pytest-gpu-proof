@@ -49,6 +49,15 @@ def get_branch(root: str = ".") -> Optional[str]:
     return _git("rev-parse", "--abbrev-ref", "HEAD", root=root)
 
 
+def get_commit_time(sha: str, root: str = ".") -> Optional[int]:
+    """Committer time (Unix seconds) of ``sha``, or None when git cannot answer."""
+    value = _git("show", "-s", "--format=%ct", sha, root=root)
+    try:
+        return int(value) if value else None
+    except ValueError:
+        return None
+
+
 def is_dirty(
     root: str = ".",
     *,

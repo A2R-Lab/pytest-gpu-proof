@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from .fingerprint import FingerprintError, recompute_fingerprint
-from .gitutils import GitError, get_commit_sha, is_dirty, require_repository
+from .gitutils import GitError, get_commit_sha, get_commit_time, is_dirty, require_repository
 from .signers.base import VerifierError as _VerifierError
 from .signers.ed25519 import (
     _public_key_fingerprint,
@@ -491,6 +491,16 @@ def _verify(
         raise VerificationError("receipt timestamp is in the future")
     if age > datetime.timedelta(days=max_days):
         raise VerificationError(f"receipt is older than the {max_days}-day policy")
+    # A session cannot have started before the commit it attests to existed
+    # (5 min of clock skew allowed). Cheap replay/forgery guard without a nonce.
+    committed = get_commit_time(stored_sha, root)
+    if committed is not None:
+        started = _parse_time(session.get("started_at"), "session.started_at")
+        commit_dt = datetime.datetime.fromtimestamp(committed, datetime.UTC)
+        if started < commit_dt - datetime.timedelta(minutes=5):
+            raise VerificationError(
+                "receipt session started before its commit existed "
+                f"({session.get('started_at')} < commit time {commit_dt:%Y-%m-%dT%H:%M:%SZ})")
     print(f"[gpu-proof] All {len(tests) - len(skipped)} executed test(s) passed")
     print("[gpu-proof] Receipt verified successfully.")
 

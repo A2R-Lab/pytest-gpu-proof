@@ -25,8 +25,16 @@ based on [Keep a Changelog](https://keepachangelog.com/); versions follow
   records which probe answered), so a torch-only box no longer records
   `gpu_info: null` and then fails a `require_gpu` policy.
 
+- Verification refuses a receipt whose session started more than five
+  minutes before its commit existed (committer time): a cheap replay and
+  forgery guard that needs no nonce.
+
 ### Added
 
+- `gpu-proof plan --receipt OLD [--repo .] [--json]`: a dry run of the
+  carry-forward conditions against the current tree, reporting per shard
+  whether it could be carried or must be re-run (and why). Drivers that plan
+  partial re-runs no longer reimplement the checks.
 - `record_gpu_uuid` (`[tool.gpu_proof]`, default `true`): set `false` to omit each GPU's
   nvidia-smi UUID from the receipt environment while keeping name, driver, memory and
   compute capability. Verification does not read the UUID.

@@ -67,6 +67,10 @@ each carried shard records `carried.original_dirty`, and verification refuses
 any dirty shard unless `allow_dirty` is set.
 
 Freshly rerun shards always win. Changed or malformed scopes require a rerun.
+`gpu-proof plan --receipt old.json --repo .` applies the same conditions as a
+dry run and reports, per shard, `carryable` or `stale` with the reason (add
+`--json` for drivers), so a partial re-run can be planned without reimplementing
+the checks.
 
 Verification rejects carried shards by default:
 

@@ -75,7 +75,9 @@ escaping, or unmerged inputs fail closed.
 Schema 3 rejects dirty recording and verification trees by default. A receipt
 may verify at its exact commit or a descendant only when the source manifest
 still matches. Freshness limits replay duration but no server-issued nonce is
-currently used.
+currently used; a session that started more than five minutes before its
+commit's committer time is refused, so a receipt cannot be back-dated onto a
+commit that did not yet exist.
 
 `allow_dirty: true`, long age limits, `--allow-skipped`, and
 `--allow-unsigned` weaken guarantees. Unsigned mode authenticates no signer,

@@ -886,3 +886,28 @@ def test_expected_skips_failure_names_the_delta(tmp_path, tmp_git_repo, signer_w
             _verify(str(path), None, str(tmp_git_repo), "testuser", None,
                     expected_skips_path=str(baseline))
     assert "unexpected skip(s)" in str(info.value) and "stale" not in str(info.value)
+
+
+def test_verify_refuses_session_that_predates_its_commit(tmp_path, tmp_git_repo, signer_with_key, monkeypatch):
+    """A4 (2026-10-12): a session cannot start before the commit it attests to
+    existed (5 min skew allowed); git failing to date the commit is not an error."""
+    signer, public_key = signer_with_key
+
+    def backdate(payload):
+        payload["session"]["started_at"] = _utcstamp(days_ago=2)
+        payload["session"]["ended_at"] = _utcstamp(days_ago=2)
+    path = _make_receipt(tmp_path, tmp_git_repo, signer, mutate=backdate)
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError, match="started before its commit existed"):
+            _verify(str(path), None, str(tmp_git_repo), "testuser", None)
+        from pytest_gpu_proof import verify as verify_mod
+        monkeypatch.setattr(verify_mod, "get_commit_time", lambda sha, root: None)
+        _verify(str(path), None, str(tmp_git_repo), "testuser", None)
+
+
+def test_get_commit_time_handles_bad_output(tmp_git_repo, monkeypatch):
+    from pytest_gpu_proof import gitutils
+    assert isinstance(gitutils.get_commit_time("HEAD", str(tmp_git_repo)), int)
+    assert gitutils.get_commit_time("0" * 40, str(tmp_git_repo)) is None
+    monkeypatch.setattr(gitutils, "_git", lambda *a, **k: "not-a-number")
+    assert gitutils.get_commit_time("HEAD", str(tmp_git_repo)) is None

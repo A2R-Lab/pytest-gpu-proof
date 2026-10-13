@@ -92,15 +92,18 @@ fingerprint scope, no selected tests, or write failure makes pytest fail and
 leaves no stale receipt behind. `--gpu-proof-best-effort` is an explicit
 development-only opt-out.
 
-## Four interfaces
+## Five interfaces
 
-The project exposes four small interfaces:
+The project exposes five small interfaces:
 
 1. **Markers** select receipt tests.
-2. **`gpu_proof_check`** compares a reference callable with a candidate.
+2. **`gpu_proof_check`** compares a reference callable with a candidate
+   (optional; every current user selects tests with the marker alone).
 3. **`gpu-proof verify`** validates a receipt and repository policy.
 4. **`gpu-proof merge`** combines separately executed shards and optionally
    carries unchanged shards forward.
+5. **`gpu-proof plan`** reports, before a partial re-run, which shards of an
+   old receipt could still be carried and which must be re-run.
 
 ### Markers
 
@@ -270,6 +273,15 @@ The merger refuses mixed commits, schemas, global fingerprints, modes,
 runtime environments, duplicate tests, and duplicate shard names. It records
 input provenance but does not verify each input signature; the merger signs
 for the union. See [sharding and carry-forward](docs/sharding.md).
+
+Carry-forward (`gpu-proof merge ... --carry-from last-green.json`) grafts an
+absent old shard only when its receipt commit is an ancestor of the current
+one, both the receipt and the shard were recorded with a clean tree, its
+narrow fingerprint recomputes identically, and it introduces no duplicate
+test. `gpu-proof plan --receipt last-green.json` prints the same verdicts
+without merging. Generated inputs named through `fingerprint_extra_paths`
+should be gitignored: an untracked generated file makes the recording tree
+dirty, and dirty recordings are never carried.
 
 ## Receipt schema
 

@@ -563,3 +563,51 @@ def test_verify_refuses_dirty_shard_unless_policy_allows(tmp_path, tmp_git_repo,
         with pytest.raises(VerificationError, match="shard 'modA' was recorded with a dirty"):
             _verify(str(out), _policy(tmp_path), str(tmp_git_repo), "testuser", None)
         _verify(str(out), _policy(tmp_path, allow_dirty=True), str(tmp_git_repo), "testuser", None)
+
+
+def test_plan_carry_reports_each_shard(tmp_path, tmp_git_repo, signer_with_key, capsys):
+    """B2 (2026-10-12): `gpu-proof plan` = carry_forward's conditions as a report."""
+    from pytest_gpu_proof.cli import main as cli_main
+    from pytest_gpu_proof.merge import plan_carry
+    signer, _, _ = signer_with_key
+    old, _fresh = _carry_setup(tmp_path, tmp_git_repo, signer, drift_b=True)
+    old_r = json.loads(old.read_text())
+    report = plan_carry(old_r, str(tmp_git_repo))
+    assert report["receipt"]["carryable"] is True
+    verdicts = {s["name"]: s["verdict"] for s in report["shards"]}
+    assert verdicts == {"modA": "carryable", "modB": "stale"}
+    # dirty shard, dirty receipt, non-ancestor, bad fingerprint, monolithic
+    old_r["shards"][0]["dirty"] = True
+    assert plan_carry(old_r, str(tmp_git_repo))["shards"][0]["reason"] == "recorded with a dirty working tree"
+    old_r["shards"][0]["dirty"] = False
+    old_r["shards"][0]["fingerprint"] = {"algorithm": "bogus", "included_paths": ["src"]}
+    assert "fingerprint invalid" in plan_carry(old_r, str(tmp_git_repo))["shards"][0]["reason"]
+    old_r["repo"]["dirty"] = True
+    rep = plan_carry(old_r, str(tmp_git_repo))
+    assert rep["receipt"]["carryable"] is False and all(s["verdict"] == "stale" for s in rep["shards"])
+    old_r["repo"]["dirty"] = False
+    old_r["repo"]["commit_sha"] = "0" * 40
+    assert "not an ancestor" in plan_carry(old_r, str(tmp_git_repo))["receipt"]["reason"]
+    old_r["repo"]["commit_sha"] = None
+    assert plan_carry(old_r, str(tmp_git_repo))["receipt"]["reason"] == "missing commit SHA"
+    assert plan_carry({"schema_version": "1", "tests": []}, str(tmp_git_repo))["receipt"]["reason"].startswith("not a sharded")
+    # CLI: text and json forms, unreadable receipt
+    import sys as _sys
+    argv = _sys.argv
+    try:
+        _sys.argv = ["gpu-proof", "plan", "--receipt", str(old), "--repo", str(tmp_git_repo)]
+        with pytest.raises(SystemExit) as e:
+            cli_main()
+        assert e.value.code == 0
+        out = capsys.readouterr().out
+        assert "carryable modA" in out and "stale     modB" in out and "1/2 shard(s) carryable" in out
+        _sys.argv = ["gpu-proof", "plan", "--receipt", str(old), "--repo", str(tmp_git_repo), "--json"]
+        with pytest.raises(SystemExit):
+            cli_main()
+        assert json.loads(capsys.readouterr().out)["shards"][1]["verdict"] == "stale"
+        _sys.argv = ["gpu-proof", "plan", "--receipt", str(tmp_path / "missing.json")]
+        with pytest.raises(SystemExit) as e:
+            cli_main()
+        assert e.value.code == 1
+    finally:
+        _sys.argv = argv
