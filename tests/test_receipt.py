@@ -301,3 +301,41 @@ def test_signer_resolution_failure(monkeypatch, mock_config):
     monkeypatch.setattr("pytest_gpu_proof.receipt.get_github_username", lambda root: None)
     with pytest.raises(ValueError, match="cannot determine"):
         _resolve_github_username(mock_config, None, ".")
+
+
+def test_gpu_info_falls_back_to_torch_when_nvidia_smi_is_absent(monkeypatch):
+    """A3 (2026-10-12): the environment block uses the same torch probe as the
+    gpu_required marker, so a torch-only box never records gpu_info: null."""
+    import sys
+    import types
+    from pytest_gpu_proof import receipt as receipt_mod
+
+    def no_smi(*args, **kwargs):
+        raise FileNotFoundError("nvidia-smi")
+    monkeypatch.setattr(receipt_mod.subprocess, "run", no_smi)
+    props = types.SimpleNamespace(name="Fake GPU", total_memory=8 * 1024 ** 3, major=12, minor=0)
+    fake_cuda = types.SimpleNamespace(is_available=lambda: True, device_count=lambda: 1,
+                                      get_device_properties=lambda i: props)
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=fake_cuda))
+    info = receipt_mod._gpu_info()
+    assert info["source"] == "torch"
+    assert info["devices"] == [{"index": "0", "uuid": None, "name": "Fake GPU", "driver_version": None,
+                                "memory": "8192 MiB", "compute_capability": "12.0"}]
+    # no CUDA -> None; a broken runtime -> None; no torch -> None
+    fake_cuda.is_available = lambda: False
+    assert receipt_mod._gpu_info() is None
+    fake_cuda.is_available = lambda: True
+    fake_cuda.device_count = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+    assert receipt_mod._gpu_info() is None
+    monkeypatch.setitem(sys.modules, "torch", None)
+    assert receipt_mod._gpu_info() is None
+
+
+def test_gpu_info_falls_back_to_torch_on_nvidia_smi_failure(monkeypatch):
+    import sys
+    import types
+    from pytest_gpu_proof import receipt as receipt_mod
+    monkeypatch.setattr(receipt_mod.subprocess, "run",
+                        lambda *a, **k: types.SimpleNamespace(returncode=1, stdout=""))
+    monkeypatch.setitem(sys.modules, "torch", None)
+    assert receipt_mod._gpu_info() is None

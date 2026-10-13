@@ -453,7 +453,17 @@ def _verify(
     else:
         expected = None
     if expected is not None and skipped != expected:
-        raise VerificationError("recorded skip set does not exactly match the expected baseline")
+        unexpected = sorted(skipped - expected)
+        stale = sorted(expected - skipped)
+        detail = []
+        if unexpected:
+            detail.append(f"{len(unexpected)} unexpected skip(s): {', '.join(unexpected[:5])}"
+                          + (" …" if len(unexpected) > 5 else ""))
+        if stale:
+            detail.append(f"{len(stale)} baselined test(s) now run (stale baseline): "
+                          f"{', '.join(stale[:5])}" + (" …" if len(stale) > 5 else ""))
+        raise VerificationError(
+            "recorded skip set does not exactly match the expected baseline — " + "; ".join(detail))
     if skipped and expected is None and not allow_skipped:
         raise VerificationError(f"{len(skipped)} marked test(s) were skipped")
 

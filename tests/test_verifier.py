@@ -863,3 +863,26 @@ def test_dirty_query_error_is_rejected(
     monkeypatch.setattr("pytest_gpu_proof.verify.is_dirty", lambda *a, **k: (_ for _ in ()).throw(GitError("status broke")))
     with _mock_github_keys(public_key), pytest.raises(VerificationError, match="status broke"):
         _verify(str(path), None, str(tmp_git_repo), "testuser", None)
+
+
+def test_expected_skips_failure_names_the_delta(tmp_path, tmp_git_repo, signer_with_key):
+    """B4 (2026-10-12): the mismatch message lists unexpected skips and stale
+    baseline entries instead of only saying the sets differ."""
+    signer, public_key = signer_with_key
+    path = _make_receipt(tmp_path, tmp_git_repo, signer, results=_mixed_results())
+    baseline = tmp_path / "expected_skips.txt"
+    baseline.write_text("tests/test_add.py::test_never_skipped\n")
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError) as info:
+            _verify(str(path), None, str(tmp_git_repo), "testuser", None,
+                    expected_skips_path=str(baseline))
+    msg = str(info.value)
+    assert "1 unexpected skip(s): tests/test_add.py::test_skipped" in msg
+    assert "stale baseline" in msg and "test_never_skipped" in msg
+    # unexpected only (empty baseline): no stale clause
+    baseline.write_text("# nothing expected\n")
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError) as info:
+            _verify(str(path), None, str(tmp_git_repo), "testuser", None,
+                    expected_skips_path=str(baseline))
+    assert "unexpected skip(s)" in str(info.value) and "stale" not in str(info.value)

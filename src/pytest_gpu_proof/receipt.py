@@ -28,6 +28,34 @@ def _utcnow() -> str:
     return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _gpu_info_from_torch() -> Optional[Dict[str, Any]]:
+    """nvidia-smi-free fallback: the same torch probe `gpu_required` uses, so a
+    box that RUNS GPU tests never records `gpu_info: null` (which would then
+    fail a `require_gpu` policy for the wrong reason)."""
+    try:
+        import torch  # type: ignore
+    except ImportError:
+        return None
+    try:
+        if not torch.cuda.is_available():
+            return None
+        devices = []
+        for index in range(torch.cuda.device_count()):
+            props = torch.cuda.get_device_properties(index)
+            devices.append({
+                "index": str(index),
+                "uuid": None,
+                "name": props.name,
+                "driver_version": None,
+                "memory": f"{props.total_memory // (1024 * 1024)} MiB",
+                "compute_capability": f"{props.major}.{props.minor}",
+            })
+    except Exception:  # a broken CUDA runtime must not sink the receipt
+        return None
+    return {"devices": devices, "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+            "source": "torch"}
+
+
 def _gpu_info(include_uuid: bool = True) -> Optional[Dict[str, Any]]:
     try:
         result = subprocess.run(
@@ -41,9 +69,9 @@ def _gpu_info(include_uuid: bool = True) -> Optional[Dict[str, Any]]:
             timeout=10,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
+        return _gpu_info_from_torch()
     if result.returncode != 0 or not result.stdout.strip():
-        return None
+        return _gpu_info_from_torch()
     devices = []
     for line in result.stdout.splitlines():
         parts = [part.strip() for part in line.split(",")]
@@ -60,6 +88,7 @@ def _gpu_info(include_uuid: bool = True) -> Optional[Dict[str, Any]]:
     return {
         "devices": devices,
         "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+        "source": "nvidia-smi",
     }
 
 

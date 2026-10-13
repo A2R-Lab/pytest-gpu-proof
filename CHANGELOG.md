@@ -18,6 +18,13 @@ based on [Keep a Changelog](https://keepachangelog.com/); versions follow
   `carried.original_dirty`, and verification refuses a carried shard recorded
   dirty unless `allow_dirty` is set.
 
+- The expected-skips mismatch names the delta (unexpected skips and stale
+  baseline entries) instead of only reporting that the sets differ.
+- The receipt's `environment.gpu_info` falls back to the same torch probe the
+  `gpu_required` marker uses when nvidia-smi is absent or fails (`source`
+  records which probe answered), so a torch-only box no longer records
+  `gpu_info: null` and then fails a `require_gpu` policy.
+
 ### Added
 
 - `record_gpu_uuid` (`[tool.gpu_proof]`, default `true`): set `false` to omit each GPU's
