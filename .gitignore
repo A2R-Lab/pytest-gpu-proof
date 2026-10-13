@@ -300,3 +300,5 @@ Testing/
 
 # Specifics
 gpu-proof.json
+# Local working notes (never committed)
+docs/open-tasks/

@@ -119,7 +119,8 @@ def merge_payloads(receipts: List[dict], sources: List[str]) -> dict:
     # the first shard. `dirty` is OR-ed — one dirty shard makes the merged
     # attestation dirty, and the verifier's dirty policy then applies honestly.
     merged["repo"] = dict(receipts[0].get("repo", {}))
-    merged["repo"]["dirty"] = any(r.get("repo", {}).get("dirty") for r in receipts)
+    merged["repo"]["dirty"] = any(r.get("repo", {}).get("dirty") for r in receipts) or any(
+        shard.get("dirty") for r in receipts for shard in (r.get("shards") or []))
     # environment: fields asserted identical above; gpu_info from the first
     # shard that has one (a CPU-only shard shouldn't erase the GPU record).
     merged["environment"] = dict(receipts[0].get("environment", {}))
@@ -181,7 +182,12 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
       1. the old receipt is schema '2' and its commit is an ANCESTOR of the
          fresh payload's commit (same history, older point);
       2. the shard's narrow fingerprint recomputes IDENTICAL against the
-         current tree — the inputs that shard proved are unchanged at HEAD.
+         current tree — the inputs that shard proved are unchanged at HEAD;
+      3. the old receipt was recorded with a CLEAN tree (its `repo.dirty` is
+         false) — a dirty recording may have exercised uncommitted bytes
+         outside the shard's narrow fingerprint, and the merged `repo.dirty`
+         covers fresh inputs only. The carried metadata records
+         ``original_dirty`` so the verifier can refuse it independently.
 
     Shard signatures are provenance (merge is offline); the re-signed merged
     receipt is the attestation, and the verifier re-checks every carried
@@ -199,6 +205,16 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
         raise MergeError(
             f"--carry-from {old_source}: its commit {old_sha[:12]} is not an "
             f"ancestor of {new_sha[:12]} — different history, cannot carry.")
+    # A receipt recorded with a dirty tree attests to unknown bytes: its shards
+    # ran against uncommitted edits that may lie OUTSIDE their narrow
+    # fingerprints, so a digest match at HEAD proves nothing. The merged
+    # receipt's `repo.dirty` is OR-ed over the FRESH inputs only, so carrying
+    # such a shard would launder it into a clean-looking descendant. Refuse.
+    if old_receipt.get("repo", {}).get("dirty"):
+        raise MergeError(
+            f"--carry-from {old_source}: that receipt was recorded with a dirty "
+            f"working tree; its shards cannot be carried — re-run them.")
+    merged_dirty = bool(payload.get("repo", {}).get("dirty"))
 
     fresh_names = {s.get("name") for s in payload.get("shards") or []}
     fresh_ids = {t.get("node_id") for t in payload.get("tests", [])}
@@ -208,6 +224,10 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
         nm = shard.get("name")
         if nm in fresh_names:
             continue  # freshly re-run — the new result wins
+        if shard.get("dirty"):
+            raise MergeError(
+                f"--carry-from {old_source}: shard {nm!r} was recorded with a dirty "
+                f"working tree; it cannot be carried — re-run it.")
         sfp = shard.get("fingerprint", {})
         try:
             snow = recompute_fingerprint(sfp, root=repo_root)
@@ -230,6 +250,7 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
         grafted["carried"] = {
             "from": old_source.rsplit("/", 1)[-1],
             "original_commit_sha": old_sha,
+            "original_dirty": bool(shard.get("dirty", False)),
             "original_ended_at": old_receipt.get("session", {}).get("ended_at"),
             "original_signer": (
                 (old_receipt.get("signer") or {}).get("github_user")
@@ -246,11 +267,114 @@ def carry_forward(payload: dict, old_receipt: dict, old_source: str,
             fresh_ids.add(nid)
         carried_count += 1
     payload["session"]["node_ids"] = [t["node_id"] for t in payload["tests"]]
+    payload["repo"]["dirty"] = merged_dirty  # carried shards are clean by construction
     payload["schema_version"] = str(payload.get("schema_version"))
     if not carried_count:
         print(f"[gpu-proof] merge: nothing to carry from {old_source} "
               f"(all its shards were freshly re-run)")
     return payload
+
+
+def verify_input_signatures(receipts: List[dict], sources: List[str]) -> List[str]:
+    """Authenticate every input shard against GitHub keys BEFORE merging
+    (opt-in: ``gpu-proof merge --verify-inputs``). Unsigned inputs are refused;
+    returns the verified signer per input. Uses the verifier's own signature
+    path so an input shard cannot satisfy a weaker check than a receipt."""
+    from .verify import VerificationError, _verify_signature
+
+    signers = []
+    for src, r in zip(sources, receipts):
+        if not r.get("signature"):
+            raise MergeError(f"--verify-inputs: {src} is unsigned")
+        try:
+            username, _fp, _schema = _verify_signature(r, str(r.get("schema_version")), None, {})
+        except VerificationError as exc:
+            raise MergeError(f"--verify-inputs: {src}: {exc}") from exc
+        signers.append(username)
+    return signers
+
+
+def receipt_status(path: str) -> dict:
+    """One-line summary fields for ``gpu-proof status`` (never raises on a
+    malformed file: it is reported as such)."""
+    try:
+        r = load_receipt(path)
+    except MergeError as exc:
+        return {"file": os.path.basename(path), "error": str(exc)}
+    repo = r.get("repo") or {}
+    tests = r.get("tests") or []
+    shards = r.get("shards") or []
+    return {
+        "file": os.path.basename(path),
+        "schema": r.get("schema_version"),
+        "commit_sha": repo.get("commit_sha"),
+        "dirty": bool(repo.get("dirty")) or any(s.get("dirty") for s in shards),
+        "signed": bool(r.get("signature")),
+        "outcome": (r.get("session") or {}).get("outcome"),
+        "ended_at": (r.get("session") or {}).get("ended_at"),
+        "tests": len(tests),
+        "failed": sum(1 for t in tests if t.get("outcome") not in ("passed", "skipped")),
+        "skipped": sum(1 for t in tests if t.get("outcome") == "skipped"),
+        "shards": [s.get("name") for s in shards],
+        "carried": sum(1 for s in shards if s.get("carried")),
+    }
+
+
+def collect_durations(receipts: List[dict], existing: Optional[dict] = None) -> dict:
+    """Fold per-node ``duration_s`` from receipts into ``existing`` (later
+    receipts win) — the calibration input for drivers that bin-pack shards."""
+    out = dict(existing or {})
+    for r in receipts:
+        for t in r.get("tests") or []:
+            nid, dur = t.get("node_id"), t.get("duration_s")
+            if isinstance(nid, str) and isinstance(dur, (int, float)):
+                out[nid] = float(dur)
+    return out
+
+
+def plan_carry(old_receipt: dict, repo_root: str = ".") -> dict:
+    """Dry run of :py:func:`carry_forward`'s soundness conditions against the
+    CURRENT tree, without grafting: which shards of ``old_receipt`` could be
+    carried as-is and which must be re-run, with a reason each. Drivers that
+    plan a partial re-run (which shards to execute fresh) use this instead of
+    reimplementing the checks."""
+    from .fingerprint import FingerprintError, recompute_fingerprint
+    from .gitutils import get_commit_sha
+
+    report: dict = {"receipt": {}, "shards": []}
+    schema = old_receipt.get("schema_version")
+    old_sha = (old_receipt.get("repo") or {}).get("commit_sha")
+    head = get_commit_sha(repo_root)
+    receipt_ok, why = True, "ok"
+    if schema not in ("2", "3") or not old_receipt.get("shards"):
+        receipt_ok, why = False, "not a sharded schema-2/3 receipt"
+    elif not old_sha or not head:
+        receipt_ok, why = False, "missing commit SHA"
+    elif old_sha != head and not _git_is_ancestor(repo_root, old_sha, head):
+        receipt_ok, why = False, f"commit {old_sha[:12]} is not an ancestor of HEAD {head[:12]}"
+    elif (old_receipt.get("repo") or {}).get("dirty"):
+        receipt_ok, why = False, "recorded with a dirty working tree"
+    report["receipt"] = {"commit_sha": old_sha, "head": head, "carryable": receipt_ok, "reason": why}
+    for shard in old_receipt.get("shards") or []:
+        nm = shard.get("name")
+        if not receipt_ok:
+            verdict, reason = "stale", why
+        elif shard.get("dirty"):
+            verdict, reason = "stale", "recorded with a dirty working tree"
+        else:
+            sfp = shard.get("fingerprint", {})
+            try:
+                now = recompute_fingerprint(sfp, root=repo_root)
+            except FingerprintError as exc:
+                verdict, reason = "stale", f"fingerprint invalid: {exc}"
+            else:
+                if now["digest"] == sfp.get("digest"):
+                    verdict, reason = "carryable", "fingerprint unchanged"
+                else:
+                    verdict, reason = "stale", "fingerprint changed"
+        report["shards"].append({"name": nm, "verdict": verdict, "reason": reason,
+                                 "node_count": len(shard.get("node_ids") or [])})
+    return report
 
 
 def merge_receipts(
@@ -262,6 +386,7 @@ def merge_receipts(
     unsigned: bool = False,
     carry_from: Optional[str] = None,
     repo_root: str = ".",
+    verify_inputs: bool = False,
 ) -> dict:
     """Merge receipts at ``paths`` and write the re-signed result to ``out``.
 
@@ -273,6 +398,9 @@ def merge_receipts(
     see :py:func:`carry_forward` for the soundness conditions.
     """
     receipts = [load_receipt(p) for p in paths]
+    if verify_inputs:
+        for src, who in zip(paths, verify_input_signatures(receipts, list(paths))):
+            print(f"[gpu-proof] merge: input {src} signed by @{who}")
     payload = merge_payloads(receipts, list(paths))
     if carry_from:
         payload = carry_forward(payload, load_receipt(carry_from), carry_from,

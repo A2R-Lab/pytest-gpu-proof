@@ -4,6 +4,57 @@ All notable changes to pytest-gpu-proof are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/) (pre-1.0: minor bumps may break).
 
+## [0.4.1] — 2026-10-12
+
+### Fixed
+
+- Shard entries record `dirty` (the recording tree's state); merge ORs shard
+  flags into the merged `repo.dirty`, carry-forward refuses a dirty shard, and
+  verification refuses any dirty shard unless `allow_dirty` is set.
+- `gpu-proof merge --carry-from` refuses a source receipt recorded with a dirty
+  working tree. The merged `repo.dirty` is OR-ed over the fresh inputs only, so a
+  carried shard from a dirty recording was laundered into a clean-looking merged
+  receipt (found by GRiD's split driver, 2026-10-10). Carried shards now record
+  `carried.original_dirty`, and verification refuses a carried shard recorded
+  dirty unless `allow_dirty` is set.
+
+- The expected-skips mismatch names the delta (unexpected skips and stale
+  baseline entries) instead of only reporting that the sets differ.
+- The receipt's `environment.gpu_info` falls back to the same torch probe the
+  `gpu_required` marker uses when nvidia-smi is absent or fails (`source`
+  records which probe answered), so a torch-only box no longer records
+  `gpu_info: null` and then fails a `require_gpu` policy.
+
+- Verification refuses a receipt whose session started more than five
+  minutes before its commit existed (committer time): a cheap replay and
+  forgery guard that needs no nonce.
+
+- `mode: ci-gpu` is now bound to the signing key: a ci-gpu receipt verifies
+  only when the policy lists `allowed_key_fingerprints` and the receipt was
+  signed by one of them (previously the mode was an unverified label).
+- Without an explicit `carried_max_age_days`, a carried shard's original run
+  may not be older than the receipt's `max_age_days` (was a fixed 30 days).
+
+### Added
+
+- `gpu-proof merge --verify-inputs`: authenticate every input shard against
+  its signer's current GitHub keys before merging (unsigned or tampered inputs
+  are refused).
+- `gpu-proof status PATH...`: one-line summaries of receipt files or
+  directories (commit, dirty, signed, outcome, counts, shards, carried).
+- `gpu-proof durations RECEIPT... --out map.json`: fold per-test durations
+  into a JSON map for shard bin-packing.
+- Command-line equivalents for the toml-only options:
+  `--gpu-proof-no-gpu-uuid`, `--gpu-proof-require-gpu`,
+  `--gpu-proof-max-age-days N`.
+- `gpu-proof plan --receipt OLD [--repo .] [--json]`: a dry run of the
+  carry-forward conditions against the current tree, reporting per shard
+  whether it could be carried or must be re-run (and why). Drivers that plan
+  partial re-runs no longer reimplement the checks.
+- `record_gpu_uuid` (`[tool.gpu_proof]`, default `true`): set `false` to omit each GPU's
+  nvidia-smi UUID from the receipt environment while keeping name, driver, memory and
+  compute capability. Verification does not read the UUID.
+
 ## [0.4.0] — 2026-08-17
 
 ### Added

@@ -21,6 +21,9 @@ class GpuProofConfig:
     github_username: Optional[str] = None
     max_age_days: int = 30
     require_gpu: bool = False
+    # Record each device's nvidia-smi UUID in the receipt environment. Off keeps the
+    # device name, driver, memory and compute capability but not the card identity.
+    record_gpu_uuid: bool = True
     # Sharded emission: a declared shard name + its narrow
     # fingerprint paths (None -> the global fingerprint_paths).
     shard_name: Optional[str] = None
@@ -92,7 +95,7 @@ def load_config(pytest_config) -> GpuProofConfig:
             return [p.strip() for p in raw.split(",") if p.strip()]
         return [str(p) for p in raw]
 
-    max_age = toml_cfg.get("max_age_days")
+    max_age = resolve("--gpu-proof-max-age-days", "max_age_days", None)
     max_age_days = int(max_age) if max_age is not None else 30
 
     return GpuProofConfig(
@@ -117,7 +120,11 @@ def load_config(pytest_config) -> GpuProofConfig:
         ),
         github_username=resolve("--gpu-proof-github-user", "github_username", None),
         max_age_days=max_age_days,
-        require_gpu=bool(toml_cfg.get("require_gpu", False)),
+        # store_true flags can only turn a setting ON (or, for the UUID, OFF).
+        require_gpu=bool(opt("--gpu-proof-require-gpu", False)
+                         or toml_cfg.get("require_gpu", False)),
+        record_gpu_uuid=bool(toml_cfg.get("record_gpu_uuid", True))
+        and not bool(opt("--gpu-proof-no-gpu-uuid", False)),
         shard_name=resolve("--gpu-proof-shard", "shard_name", None),
         shard_fingerprint_paths=shard_paths,
         shard_fingerprint_extra_paths=(

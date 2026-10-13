@@ -53,7 +53,7 @@ schema 3. Repositories that have finished migrating should pin
 | `allowed_key_fingerprints` | SSH SHA-256 fingerprints accepted in restricted mode |
 | `min_schema` | Minimum acceptable receipt schema version (1, 2, or 3) |
 | `max_age_days` | Maximum age of the merged/session receipt |
-| `require_mode` | Required receipt mode: `local` or `ci-gpu` |
+| `require_mode` | Required receipt mode: `local` or `ci-gpu` (a `ci-gpu` receipt additionally requires `allowed_key_fingerprints` and must be signed by a listed key) |
 | `allow_dirty` | Permit dirty recording or verification trees |
 | `required_fingerprint_paths` | Exact tracked path list |
 | `required_fingerprint_extra_paths` | Exact generated/ignored path list |
@@ -61,7 +61,7 @@ schema 3. Repositories that have finished migrating should pin
 | `required_test_manifest` | Repository-relative file containing exact node IDs |
 | `required_shard_fingerprints` | Exact paths/extras for every named shard |
 | `allow_carried` | Permit carry-forward shards |
-| `carried_max_age_days` | Maximum age of each carried shard's original run |
+| `carried_max_age_days` | Maximum age of each carried shard's original run (default: `max_age_days`, capped at 30) |
 
 Example shard scope:
 

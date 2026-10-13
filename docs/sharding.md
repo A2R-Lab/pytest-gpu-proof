@@ -38,8 +38,10 @@ session failed.
 
 The merged receipt records input source names, counts, times, and recorded
 signers, then signs the result with the merger's key. Input signatures are
-provenance, not independently verified during offline merge. The merger
-attests to the union.
+provenance, not verified during an offline merge, unless `--verify-inputs` is
+passed: then every input must verify against its signer's current GitHub keys
+(unsigned inputs are refused) before the union is formed. The merger attests
+to the union either way.
 
 ## Carry forward unchanged shards
 
@@ -55,10 +57,22 @@ An absent old shard is carried only when:
 1. its receipt commit is the current commit or an ancestor;
 2. its stored narrow manifest—including explicit extra paths—recomputes
    identically at the current tree;
-3. it does not duplicate a fresh node ID;
-4. every claimed node ID exists in the old tests list.
+3. its receipt was recorded with a clean working tree (`repo.dirty` false): a
+   dirty recording may have exercised uncommitted bytes outside the shard's
+   narrow manifest, and the merged `repo.dirty` covers fresh inputs only;
+4. it does not duplicate a fresh node ID;
+5. every claimed node ID exists in the old tests list.
+
+Every shard entry records `dirty` (the recording tree's state), merge ORs
+shard flags into the merged `repo.dirty`, carry-forward refuses a dirty shard,
+each carried shard records `carried.original_dirty`, and verification refuses
+any dirty shard unless `allow_dirty` is set.
 
 Freshly rerun shards always win. Changed or malformed scopes require a rerun.
+`gpu-proof plan --receipt old.json --repo .` applies the same conditions as a
+dry run and reports, per shard, `carryable` or `stale` with the reason (add
+`--json` for drivers), so a partial re-run can be planned without reimplementing
+the checks.
 
 Verification rejects carried shards by default:
 

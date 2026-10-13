@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from .fingerprint import FingerprintError, recompute_fingerprint
-from .gitutils import GitError, get_commit_sha, is_dirty, require_repository
+from .gitutils import GitError, get_commit_sha, get_commit_time, is_dirty, require_repository
 from .signers.base import VerifierError as _VerifierError
 from .signers.ed25519 import (
     _public_key_fingerprint,
@@ -380,6 +380,17 @@ def _verify(
         raise VerificationError(
             f"receipt mode {receipt.get('mode')!r} does not match required mode {required_mode!r}"
         )
+    # ci-gpu is a claim that a controlled runner recorded the receipt. The only
+    # thing the verifier can bind that claim to is the signing key, so a ci-gpu
+    # receipt must be signed by a key the repository policy explicitly lists.
+    if receipt.get("mode") == "ci-gpu":
+        allowed_keys = set(policy.get("allowed_key_fingerprints", []))
+        if not allowed_keys:
+            raise VerificationError(
+                "ci-gpu receipts require a policy allowed_key_fingerprints list "
+                "naming the runner's signing key")
+        if signer[1] not in allowed_keys:
+            raise VerificationError("ci-gpu receipt is not signed by an allowed runner key")
 
     stored_fp = receipt["fingerprint"]
     if (
@@ -430,8 +441,16 @@ def _verify(
     if not allow_dirty and (repo.get("dirty") or current_dirty):
         raise VerificationError("repository policy requires clean recording and verification trees")
 
+    max_days = (
+        max_age_days_override
+        if max_age_days_override is not None
+        else policy.get("max_age_days", toml.get("max_age_days", 30))
+    )
+    if type(max_days) is not int or max_days < 0:
+        raise VerificationError("max_age_days must be a non-negative integer")
+
     if schema in {"2", "3"} and "shards" in receipt:
-        _verify_shards(receipt, root, policy)
+        _verify_shards(receipt, root, policy, max_days)
 
     failed = [test["node_id"] for test in tests if test.get("outcome") not in {"passed", "skipped"}]
     if schema == "3" and session.get("outcome") != "passed":
@@ -453,7 +472,17 @@ def _verify(
     else:
         expected = None
     if expected is not None and skipped != expected:
-        raise VerificationError("recorded skip set does not exactly match the expected baseline")
+        unexpected = sorted(skipped - expected)
+        stale = sorted(expected - skipped)
+        detail = []
+        if unexpected:
+            detail.append(f"{len(unexpected)} unexpected skip(s): {', '.join(unexpected[:5])}"
+                          + (" …" if len(unexpected) > 5 else ""))
+        if stale:
+            detail.append(f"{len(stale)} baselined test(s) now run (stale baseline): "
+                          f"{', '.join(stale[:5])}" + (" …" if len(stale) > 5 else ""))
+        raise VerificationError(
+            "recorded skip set does not exactly match the expected baseline — " + "; ".join(detail))
     if skipped and expected is None and not allow_skipped:
         raise VerificationError(f"{len(skipped)} marked test(s) were skipped")
 
@@ -468,24 +497,27 @@ def _verify(
     if require_gpu and not (receipt.get("environment") or {}).get("gpu_info"):
         raise VerificationError("repository policy requires recorded GPU information")
 
-    max_days = (
-        max_age_days_override
-        if max_age_days_override is not None
-        else policy.get("max_age_days", toml.get("max_age_days", 30))
-    )
-    if type(max_days) is not int or max_days < 0:
-        raise VerificationError("max_age_days must be a non-negative integer")
     ended = _parse_time(session.get("ended_at"), "session.ended_at")
     age = datetime.datetime.now(datetime.UTC) - ended
     if age < datetime.timedelta(minutes=-5):
         raise VerificationError("receipt timestamp is in the future")
     if age > datetime.timedelta(days=max_days):
         raise VerificationError(f"receipt is older than the {max_days}-day policy")
+    # A session cannot have started before the commit it attests to existed
+    # (5 min of clock skew allowed). Cheap replay/forgery guard without a nonce.
+    committed = get_commit_time(stored_sha, root)
+    if committed is not None:
+        started = _parse_time(session.get("started_at"), "session.started_at")
+        commit_dt = datetime.datetime.fromtimestamp(committed, datetime.UTC)
+        if started < commit_dt - datetime.timedelta(minutes=5):
+            raise VerificationError(
+                "receipt session started before its commit existed "
+                f"({session.get('started_at')} < commit time {commit_dt:%Y-%m-%dT%H:%M:%SZ})")
     print(f"[gpu-proof] All {len(tests) - len(skipped)} executed test(s) passed")
     print("[gpu-proof] Receipt verified successfully.")
 
 
-def _verify_shards(receipt: dict, root: str, policy: dict) -> None:
+def _verify_shards(receipt: dict, root: str, policy: dict, max_days: int = 30) -> None:
     shards = receipt.get("shards")
     if not isinstance(shards, list) or not shards:
         raise VerificationError("sharded receipt has no shards")
@@ -529,15 +561,26 @@ def _verify_shards(receipt: dict, root: str, policy: dict) -> None:
             raise VerificationError(f"shard {name!r}: {exc}") from exc
         if current["digest"] != fingerprint.get("digest"):
             raise VerificationError(f"shard {name!r} fingerprint does not match")
+        if shard.get("dirty") and not policy.get("allow_dirty", False):
+            raise VerificationError(
+                f"shard {name!r} was recorded with a dirty working tree")
         carried = shard.get("carried")
         if carried:
             if not policy.get("allow_carried", False):
                 raise VerificationError(f"shard {name!r} is carried but policy rejects carry-forward")
             if not isinstance(carried, dict):
                 raise VerificationError(f"shard {name!r} carried metadata is invalid")
+            # A shard carried from a dirty recording (merge >= 0.4.1 refuses
+            # to create one; an older or hand-edited receipt could still say
+            # so) is dirty evidence; the merged repo.dirty does not cover it.
+            if carried.get("original_dirty") and not policy.get("allow_dirty", False):
+                raise VerificationError(
+                    f"carried shard {name!r} was recorded with a dirty working tree")
             original = _parse_time(carried.get("original_ended_at"), f"shard {name}.original_ended_at")
             age = datetime.datetime.now(datetime.UTC) - original
-            limit = policy.get("carried_max_age_days", 30)
+            # A carried shard's original run is never allowed to be older than
+            # the receipt itself may be, unless policy says so explicitly.
+            limit = policy.get("carried_max_age_days", min(30, max_days))
             if type(limit) is not int or limit < 0:
                 raise VerificationError("carried_max_age_days must be a non-negative integer")
             if age < datetime.timedelta(minutes=-5) or age > datetime.timedelta(days=limit):

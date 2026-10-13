@@ -75,7 +75,9 @@ escaping, or unmerged inputs fail closed.
 Schema 3 rejects dirty recording and verification trees by default. A receipt
 may verify at its exact commit or a descendant only when the source manifest
 still matches. Freshness limits replay duration but no server-issued nonce is
-currently used.
+currently used; a session that started more than five minutes before its
+commit's committer time is refused, so a receipt cannot be back-dated onto a
+commit that did not yet exist.
 
 `allow_dirty: true`, long age limits, `--allow-skipped`, and
 `--allow-unsigned` weaken guarantees. Unsigned mode authenticates no signer,
@@ -98,8 +100,10 @@ each input signature. The merger's signature attests to the union. A review
 workflow that needs independent shard authentication should verify every
 input before merging.
 
-Carry-forward means a test passed at an ancestor commit and its declared shard
-inputs are byte-identical now. It does not establish that omitted dependencies
+Carry-forward means a test passed at an ancestor commit, with a clean working
+tree, and its declared shard inputs are byte-identical now. A receipt recorded
+dirty is never a carry source: the merged `repo.dirty` is computed from fresh
+inputs only, so carrying from it would launder the dirty flag. It does not establish that omitted dependencies
 or the old environment remain equivalent. Carried shards are rejected unless
 policy opts in and bounds their original age.
 

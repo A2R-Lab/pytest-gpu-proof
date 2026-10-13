@@ -286,6 +286,12 @@ def test_schema1_with_shards_block_rejected(tmp_path, tmp_git_repo, signer_with_
 
 def test_carry_preserves_and_checks_extra_paths(tmp_path, tmp_git_repo, signer_with_key):
     signer, _, _ = signer_with_key
+    # Generated inputs live outside version control (gitignored): the recording
+    # must still be CLEAN, or carry-forward refuses it (dirty receipts attest
+    # to unknown bytes). Explicit extra paths are hashed regardless of tracking.
+    (tmp_git_repo / ".gitignore").write_text("generated.bin\n")
+    _git(tmp_git_repo, "add", ".gitignore")
+    _git(tmp_git_repo, "commit", "-m", "ignore generated input")
     generated = tmp_git_repo / "generated.bin"
     generated.write_bytes(b"stable")
     old = _shard_receipt(
@@ -293,6 +299,7 @@ def test_carry_preserves_and_checks_extra_paths(tmp_path, tmp_git_repo, signer_w
         [_result("t::extra")], shard_extra_paths=["generated.bin"],
     )
     old_r = json.loads(old.read_text())
+    assert old_r["repo"]["dirty"] is False
     fresh = _shard_receipt(
         tmp_path, tmp_git_repo, signer, "fresh.json", "fresh", ["src"],
         [_result("t::fresh")],
@@ -466,3 +473,225 @@ def test_direct_shard_validation_rejects_bad_carried_limit(
             str(tmp_git_repo),
             {"allow_carried": True, "carried_max_age_days": "bad"},
         )
+
+
+def test_carry_refuses_dirty_source_receipt(tmp_path, tmp_git_repo, signer_with_key):
+    """A receipt recorded with a dirty tree attests to unknown bytes (edits may
+    lie outside a shard's narrow fingerprint) and the merged repo.dirty is OR-ed
+    over FRESH inputs only — carrying from it would launder the dirty flag."""
+    signer, _, _ = signer_with_key
+    old, fresh = _carry_setup(tmp_path, tmp_git_repo, signer)
+    old_r = json.loads(old.read_text())
+    old_r["repo"]["dirty"] = True
+    payload = merge_payloads([json.loads(fresh.read_text())], ["fresh.json"])
+    with pytest.raises(MergeError, match="dirty working tree"):
+        carry_forward(payload, old_r, "old", str(tmp_git_repo))
+    # a clean source records original_dirty=False on every grafted shard
+    old_r["repo"]["dirty"] = False
+    merged = carry_forward(
+        merge_payloads([json.loads(fresh.read_text())], ["fresh.json"]),
+        old_r, "old", str(tmp_git_repo))
+    grafted = [s for s in merged["shards"] if s.get("carried")]
+    assert grafted and all(s["carried"]["original_dirty"] is False for s in grafted)
+
+
+def test_verify_refuses_carried_shard_recorded_dirty(tmp_path, tmp_git_repo, signer_with_key):
+    """Defense in depth: a merged receipt whose carried shard says
+    original_dirty (an older merger, or a hand-edited receipt) is refused
+    unless the policy allows dirty evidence."""
+    signer, public_key, key_path = signer_with_key
+    old, fresh = _carry_setup(tmp_path, tmp_git_repo, signer)
+    out = tmp_path / "merged.json"
+    merge_receipts([str(fresh)], str(out), key_path=key_path,
+                   carry_from=str(old), repo_root=str(tmp_git_repo))
+    merged = json.loads(out.read_text())
+    for shard in merged["shards"]:
+        if shard.get("carried"):
+            shard["carried"]["original_dirty"] = True
+    merged.pop("signature", None)
+    merged.pop("signer", None)
+    write_receipt(finalize_receipt(merged, signer), str(out))
+    os.chdir(tmp_git_repo)
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError, match="recorded with a dirty working tree"):
+            _verify(str(out), _policy(tmp_path, allow_carried=True),
+                    str(tmp_git_repo), "testuser", None)
+        _verify(str(out), _policy(tmp_path, allow_carried=True, allow_dirty=True),
+                str(tmp_git_repo), "testuser", None)
+
+
+def test_shard_records_its_own_dirty_flag_and_merge_ors_it(tmp_path, tmp_git_repo, signer_with_key):
+    """A1 (2026-10-12): the recording tree's dirty state travels with the shard;
+    merging a dirty shard next to clean ones makes the merged receipt dirty
+    even when the merger only looks at shard entries."""
+    signer, _, _ = signer_with_key
+    clean = _shard_receipt(tmp_path, tmp_git_repo, signer, "clean.json", "clean", ["src"], [_result("t::c")])
+    assert json.loads(clean.read_text())["shards"][0]["dirty"] is False
+    (tmp_git_repo / "src" / "scratch.py").write_text("x = 1\n")   # untracked -> dirty
+    dirty = _shard_receipt(tmp_path, tmp_git_repo, signer, "dirty.json", "dirty", ["src"], [_result("t::d")])
+    (tmp_git_repo / "src" / "scratch.py").unlink()
+    d = json.loads(dirty.read_text())
+    assert d["repo"]["dirty"] is True and d["shards"][0]["dirty"] is True
+    # a hand-cleaned top-level flag cannot hide a dirty shard
+    d["repo"]["dirty"] = False
+    merged = merge_payloads([json.loads(clean.read_text()), d], ["clean.json", "dirty.json"])
+    assert merged["repo"]["dirty"] is True
+
+
+def test_carry_refuses_a_dirty_shard_inside_a_clean_receipt(tmp_path, tmp_git_repo, signer_with_key):
+    signer, _, _ = signer_with_key
+    old, fresh = _carry_setup(tmp_path, tmp_git_repo, signer)
+    old_r = json.loads(old.read_text())
+    for shard in old_r["shards"]:
+        shard["dirty"] = True
+    payload = merge_payloads([json.loads(fresh.read_text())], ["fresh.json"])
+    with pytest.raises(MergeError, match="shard 'modB' was recorded with a dirty"):
+        carry_forward(payload, old_r, "old", str(tmp_git_repo))
+
+
+def test_verify_refuses_dirty_shard_unless_policy_allows(tmp_path, tmp_git_repo, signer_with_key):
+    signer, public_key, key_path = signer_with_key
+    a = _shard_receipt(tmp_path, tmp_git_repo, signer, "a.json", "modA", ["src"], [_result("t::a")])
+    out = tmp_path / "merged.json"
+    merge_receipts([str(a)], str(out), key_path=key_path, repo_root=str(tmp_git_repo))
+    merged = json.loads(out.read_text())
+    merged["shards"][0]["dirty"] = True
+    merged.pop("signature", None); merged.pop("signer", None)
+    write_receipt(finalize_receipt(merged, signer), str(out))
+    os.chdir(tmp_git_repo)
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError, match="shard 'modA' was recorded with a dirty"):
+            _verify(str(out), _policy(tmp_path), str(tmp_git_repo), "testuser", None)
+        _verify(str(out), _policy(tmp_path, allow_dirty=True), str(tmp_git_repo), "testuser", None)
+
+
+def test_plan_carry_reports_each_shard(tmp_path, tmp_git_repo, signer_with_key, capsys):
+    """B2 (2026-10-12): `gpu-proof plan` = carry_forward's conditions as a report."""
+    from pytest_gpu_proof.cli import main as cli_main
+    from pytest_gpu_proof.merge import plan_carry
+    signer, _, _ = signer_with_key
+    old, _fresh = _carry_setup(tmp_path, tmp_git_repo, signer, drift_b=True)
+    old_r = json.loads(old.read_text())
+    report = plan_carry(old_r, str(tmp_git_repo))
+    assert report["receipt"]["carryable"] is True
+    verdicts = {s["name"]: s["verdict"] for s in report["shards"]}
+    assert verdicts == {"modA": "carryable", "modB": "stale"}
+    # dirty shard, dirty receipt, non-ancestor, bad fingerprint, monolithic
+    old_r["shards"][0]["dirty"] = True
+    assert plan_carry(old_r, str(tmp_git_repo))["shards"][0]["reason"] == "recorded with a dirty working tree"
+    old_r["shards"][0]["dirty"] = False
+    old_r["shards"][0]["fingerprint"] = {"algorithm": "bogus", "included_paths": ["src"]}
+    assert "fingerprint invalid" in plan_carry(old_r, str(tmp_git_repo))["shards"][0]["reason"]
+    old_r["repo"]["dirty"] = True
+    rep = plan_carry(old_r, str(tmp_git_repo))
+    assert rep["receipt"]["carryable"] is False and all(s["verdict"] == "stale" for s in rep["shards"])
+    old_r["repo"]["dirty"] = False
+    old_r["repo"]["commit_sha"] = "0" * 40
+    assert "not an ancestor" in plan_carry(old_r, str(tmp_git_repo))["receipt"]["reason"]
+    old_r["repo"]["commit_sha"] = None
+    assert plan_carry(old_r, str(tmp_git_repo))["receipt"]["reason"] == "missing commit SHA"
+    assert plan_carry({"schema_version": "1", "tests": []}, str(tmp_git_repo))["receipt"]["reason"].startswith("not a sharded")
+    # CLI: text and json forms, unreadable receipt
+    import sys as _sys
+    argv = _sys.argv
+    try:
+        _sys.argv = ["gpu-proof", "plan", "--receipt", str(old), "--repo", str(tmp_git_repo)]
+        with pytest.raises(SystemExit) as e:
+            cli_main()
+        assert e.value.code == 0
+        out = capsys.readouterr().out
+        assert "carryable modA" in out and "stale     modB" in out and "1/2 shard(s) carryable" in out
+        _sys.argv = ["gpu-proof", "plan", "--receipt", str(old), "--repo", str(tmp_git_repo), "--json"]
+        with pytest.raises(SystemExit):
+            cli_main()
+        assert json.loads(capsys.readouterr().out)["shards"][1]["verdict"] == "stale"
+        _sys.argv = ["gpu-proof", "plan", "--receipt", str(tmp_path / "missing.json")]
+        with pytest.raises(SystemExit) as e:
+            cli_main()
+        assert e.value.code == 1
+    finally:
+        _sys.argv = argv
+
+
+def test_carried_age_is_clamped_to_the_receipt_age_policy(tmp_path, tmp_git_repo, signer_with_key):
+    """A5 (2026-10-12): without an explicit carried_max_age_days, a carried
+    shard may not be older than max_age_days (previously a fixed 30)."""
+    signer, public_key, key_path = signer_with_key
+    old, fresh = _carry_setup(tmp_path, tmp_git_repo, signer, old_days_ago=10)
+    out = tmp_path / "merged.json"
+    merge_receipts([str(fresh)], str(out), key_path=key_path,
+                   carry_from=str(old), repo_root=str(tmp_git_repo))
+    os.chdir(tmp_git_repo)
+    with _mock_github_keys(public_key):
+        with pytest.raises(VerificationError, match="outside its age policy"):
+            _verify(str(out), _policy(tmp_path, allow_carried=True, max_age_days=5),
+                    str(tmp_git_repo), "testuser", None)
+        _verify(str(out), _policy(tmp_path, allow_carried=True, max_age_days=5,
+                                  carried_max_age_days=20), str(tmp_git_repo), "testuser", None)
+        _verify(str(out), _policy(tmp_path, allow_carried=True, max_age_days=15),
+                str(tmp_git_repo), "testuser", None)
+
+
+def test_merge_verify_inputs_authenticates_every_shard(tmp_path, tmp_git_repo, signer_with_key, capsys):
+    """A2 (2026-10-12): --verify-inputs refuses unsigned or unverifiable inputs
+    and names the signer of each verified one."""
+    from pytest_gpu_proof.merge import verify_input_signatures
+    signer, public_key, key_path = signer_with_key
+    a = _shard_receipt(tmp_path, tmp_git_repo, signer, "a.json", "modA", ["src"], [_result("t::a")])
+    b = _shard_receipt(tmp_path, tmp_git_repo, signer, "b.json", "modB", ["tests"], [_result("t::b")])
+    out = tmp_path / "merged.json"
+    with _mock_github_keys(public_key):
+        merge_receipts([str(a), str(b)], str(out), key_path=key_path,
+                       repo_root=str(tmp_git_repo), verify_inputs=True)
+        assert capsys.readouterr().out.count("signed by @testuser") == 2
+        bad = json.loads(b.read_text())
+        bad["tests"][0]["duration_s"] = 9.0          # tamper -> signature no longer matches
+        with pytest.raises(MergeError, match="verify-inputs: b.json: signature does not match"):
+            verify_input_signatures([json.loads(a.read_text()), bad], ["a.json", "b.json"])
+        bad["signature"] = None
+        with pytest.raises(MergeError, match="b.json is unsigned"):
+            verify_input_signatures([bad], ["b.json"])
+
+
+def test_status_and_durations_subcommands(tmp_path, tmp_git_repo, signer_with_key, capsys):
+    """B3/B5 (2026-10-12): status summarizes receipt files; durations folds
+    per-test seconds into a JSON map (later receipts win)."""
+    from pytest_gpu_proof.cli import main as cli_main
+    from pytest_gpu_proof.merge import collect_durations, receipt_status
+    signer, _, _ = signer_with_key
+    rdir = tmp_path / "receipts"; rdir.mkdir()
+    a = _shard_receipt(rdir, tmp_git_repo, signer, "a.json", "modA", ["src"], [_result("t::a")])
+    (rdir / "junk.json").write_text("{}")
+    st = receipt_status(str(a))
+    assert st["shards"] == ["modA"] and st["tests"] == 1 and st["signed"] and not st["dirty"]
+    assert "error" in receipt_status(str(rdir / "junk.json"))
+    assert collect_durations([{"tests": [{"node_id": "x", "duration_s": 1}, {"node_id": "bad"}]}],
+                             {"x": 0.5, "y": 2.0}) == {"x": 1.0, "y": 2.0}
+    import sys as _sys
+    argv = _sys.argv
+    try:
+        _sys.argv = ["gpu-proof", "status", str(rdir)]
+        with pytest.raises(SystemExit) as e:
+            cli_main()
+        out = capsys.readouterr().out
+        assert e.value.code == 0 and "a.json: schema 3 @" in out and "junk.json: " in out
+        _sys.argv = ["gpu-proof", "status", str(a), "--json"]
+        with pytest.raises(SystemExit):
+            cli_main()
+        assert json.loads(capsys.readouterr().out)[0]["file"] == "a.json"
+        dmap = tmp_path / "durations.json"
+        dmap.write_text("not json")
+        _sys.argv = ["gpu-proof", "durations", str(a), "--out", str(dmap)]
+        with pytest.raises(SystemExit) as e:
+            cli_main()
+        assert e.value.code == 0 and json.loads(dmap.read_text()) == {"t::a": 0.01}
+        dmap.write_text("[]")
+        with pytest.raises(SystemExit):
+            cli_main()
+        assert json.loads(dmap.read_text()) == {"t::a": 0.01}
+        _sys.argv = ["gpu-proof", "durations", str(tmp_path / "missing.json"), "--out", str(dmap)]
+        with pytest.raises(SystemExit) as e:
+            cli_main()
+        assert e.value.code == 1
+    finally:
+        _sys.argv = argv

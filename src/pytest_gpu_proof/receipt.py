@@ -28,7 +28,35 @@ def _utcnow() -> str:
     return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _gpu_info() -> Optional[Dict[str, Any]]:
+def _gpu_info_from_torch() -> Optional[Dict[str, Any]]:
+    """nvidia-smi-free fallback: the same torch probe `gpu_required` uses, so a
+    box that RUNS GPU tests never records `gpu_info: null` (which would then
+    fail a `require_gpu` policy for the wrong reason)."""
+    try:
+        import torch  # type: ignore
+    except ImportError:
+        return None
+    try:
+        if not torch.cuda.is_available():
+            return None
+        devices = []
+        for index in range(torch.cuda.device_count()):
+            props = torch.cuda.get_device_properties(index)
+            devices.append({
+                "index": str(index),
+                "uuid": None,
+                "name": props.name,
+                "driver_version": None,
+                "memory": f"{props.total_memory // (1024 * 1024)} MiB",
+                "compute_capability": f"{props.major}.{props.minor}",
+            })
+    except Exception:  # a broken CUDA runtime must not sink the receipt
+        return None
+    return {"devices": devices, "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+            "source": "torch"}
+
+
+def _gpu_info(include_uuid: bool = True) -> Optional[Dict[str, Any]]:
     try:
         result = subprocess.run(
             [
@@ -41,16 +69,16 @@ def _gpu_info() -> Optional[Dict[str, Any]]:
             timeout=10,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
+        return _gpu_info_from_torch()
     if result.returncode != 0 or not result.stdout.strip():
-        return None
+        return _gpu_info_from_torch()
     devices = []
     for line in result.stdout.splitlines():
         parts = [part.strip() for part in line.split(",")]
         devices.append(
             {
                 "index": parts[0] if len(parts) > 0 else None,
-                "uuid": parts[1] if len(parts) > 1 else None,
+                "uuid": parts[1] if include_uuid and len(parts) > 1 else None,
                 "name": parts[2] if len(parts) > 2 else None,
                 "driver_version": parts[3] if len(parts) > 3 else None,
                 "memory": parts[4] if len(parts) > 4 else None,
@@ -60,10 +88,11 @@ def _gpu_info() -> Optional[Dict[str, Any]]:
     return {
         "devices": devices,
         "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+        "source": "nvidia-smi",
     }
 
 
-def _env_info() -> Dict[str, Any]:
+def _env_info(record_gpu_uuid: bool = True) -> Dict[str, Any]:
     import pytest
 
     from pytest_gpu_proof import __version__
@@ -73,7 +102,7 @@ def _env_info() -> Dict[str, Any]:
         "platform": platform.platform(),
         "pytest_version": pytest.__version__,
         "plugin_version": __version__,
-        "gpu_info": _gpu_info(),
+        "gpu_info": _gpu_info(include_uuid=record_gpu_uuid),
     }
 
 
@@ -160,7 +189,7 @@ def build_receipt_payload(
             "pytest_args": list(config.invocation_args),
         },
         "tests": test_results,
-        "environment": _env_info(),
+        "environment": _env_info(getattr(config, "record_gpu_uuid", True)),
     }
 
     if config.shard_name:
@@ -184,6 +213,10 @@ def build_receipt_payload(
                 "started_at": started_at,
                 "ended_at": ended_at,
                 "carried": None,
+                # The recording tree's state travels WITH the shard: a merge ORs
+                # these into the merged repo.dirty, so a dirty shard can never be
+                # laundered by being merged or carried next to clean ones.
+                "dirty": payload["repo"]["dirty"],
             }
         ]
     return payload

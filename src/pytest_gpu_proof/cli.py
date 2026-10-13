@@ -106,8 +106,115 @@ def main():
                     "allow_carried (default: rejected).")
     mp.add_argument("--repo", default=".", metavar="PATH",
                     help="Repo root for carry-from fingerprint/ancestry checks")
+    mp.add_argument("--verify-inputs", action="store_true", default=False,
+                    help="Authenticate every input shard's signature against the "
+                    "signer's current GitHub keys before merging (unsigned inputs "
+                    "are refused)")
+
+    # status
+    sp = subparsers.add_parser(
+        "status",
+        help="Summarize receipt files (commit, dirty, outcome, tests, shards, signed)",
+    )
+    sp.add_argument("paths", nargs="+", metavar="PATH",
+                    help="Receipt files or directories (every *.json inside)")
+    sp.add_argument("--json", action="store_true", default=False)
+
+    # durations
+    dp = subparsers.add_parser(
+        "durations",
+        help="Fold per-test durations from receipts into a JSON map (bin-packing calibration)",
+    )
+    dp.add_argument("receipts", nargs="+", metavar="RECEIPT")
+    dp.add_argument("--out", required=True, metavar="PATH",
+                    help="JSON map node_id -> seconds; merged into an existing file")
+
+    # plan
+    pp = subparsers.add_parser(
+        "plan",
+        help="Dry run of carry-forward: which shards of an old receipt could be "
+             "carried against the current tree and which must be re-run",
+    )
+    pp.add_argument("--receipt", required=True, metavar="PATH",
+                    help="Older sharded receipt (the one you would --carry-from)")
+    pp.add_argument("--repo", default=".", metavar="PATH",
+                    help="Repository root for fingerprint/ancestry checks (default: .)")
+    pp.add_argument("--json", action="store_true", default=False,
+                    help="Print the plan as JSON instead of one line per shard")
 
     args = parser.parse_args()
+
+    if args.command == "plan":
+        import json
+
+        from .merge import MergeError, load_receipt, plan_carry
+
+        try:
+            report = plan_carry(load_receipt(args.receipt), repo_root=args.repo)
+        except MergeError as e:
+            print(f"gpu-proof plan: {e}", file=sys.stderr)
+            sys.exit(1)
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            r = report["receipt"]
+            print(f"receipt {str(r.get('commit_sha'))[:12]} vs HEAD {str(r.get('head'))[:12]}: "
+                  f"{'carryable' if r['carryable'] else 'NOT carryable'} ({r['reason']})")
+            for s in report["shards"]:
+                print(f"  {s['verdict']:9s} {s['name']} ({s['node_count']} tests): {s['reason']}")
+            n = sum(1 for s in report["shards"] if s["verdict"] == "carryable")
+            print(f"{n}/{len(report['shards'])} shard(s) carryable")
+        sys.exit(0)
+
+    if args.command == "status":
+        import json
+        import os
+
+        from .merge import receipt_status
+
+        files = []
+        for p in args.paths:
+            if os.path.isdir(p):
+                files += sorted(os.path.join(p, f) for f in os.listdir(p) if f.endswith(".json"))
+            else:
+                files.append(p)
+        rows = [receipt_status(f) for f in files]
+        if args.json:
+            print(json.dumps(rows, indent=2, sort_keys=True))
+        else:
+            for r in rows:
+                if "error" in r:
+                    print(f"{r['file']}: {r['error']}")
+                    continue
+                print(f"{r['file']}: schema {r['schema']} @ {str(r['commit_sha'])[:12]}"
+                      f"{' DIRTY' if r['dirty'] else ''}{'' if r['signed'] else ' UNSIGNED'}"
+                      f" {r['outcome'] or '-'} tests={r['tests']} failed={r['failed']} "
+                      f"skipped={r['skipped']} shards={len(r['shards'])} carried={r['carried']} "
+                      f"ended={r['ended_at']}")
+        sys.exit(0)
+
+    if args.command == "durations":
+        import json
+
+        from .merge import MergeError, collect_durations, load_receipt
+
+        try:
+            receipts = [load_receipt(p) for p in args.receipts]
+        except MergeError as e:
+            print(f"gpu-proof durations: {e}", file=sys.stderr)
+            sys.exit(1)
+        existing = {}
+        try:
+            with open(args.out) as f:
+                existing = json.load(f)
+        except (OSError, ValueError):
+            existing = {}
+        merged = collect_durations(receipts, existing if isinstance(existing, dict) else {})
+        with open(args.out, "w") as f:
+            json.dump(merged, f, indent=2, sort_keys=True)
+            f.write("\n")
+        print(f"durations: {len(merged)} node(s) -> {args.out}")
+        sys.exit(0)
 
     if args.command == "merge":
         from .merge import MergeError, merge_receipts
@@ -120,6 +227,7 @@ def main():
                 unsigned=args.unsigned,
                 carry_from=args.carry_from,
                 repo_root=args.repo,
+                verify_inputs=args.verify_inputs,
             )
         except MergeError as e:
             print(f"gpu-proof merge: {e}", file=sys.stderr)
