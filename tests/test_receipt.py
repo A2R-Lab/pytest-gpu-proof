@@ -339,3 +339,38 @@ def test_gpu_info_falls_back_to_torch_on_nvidia_smi_failure(monkeypatch):
                         lambda *a, **k: types.SimpleNamespace(returncode=1, stdout=""))
     monkeypatch.setitem(sys.modules, "torch", None)
     assert receipt_mod._gpu_info() is None
+
+
+@pytest.mark.parametrize("code, output, expected", [
+    (0, "nvcc: NVIDIA (R) Cuda compiler driver\nCuda compilation tools, release 13.2, V13.2.51\n",
+     "nvcc: NVIDIA (R) Cuda compiler driver\nCuda compilation tools, release 13.2, V13.2.51"),
+    (0, " \n", None),
+    (1, "partial output", None),
+])
+def test_nvcc_version(monkeypatch, code, output, expected):
+    import subprocess
+    from pytest_gpu_proof.receipt import _nvcc_version
+
+    def run(args, **kwargs):
+        assert args == ["nvcc", "--version"]
+        assert kwargs == {"capture_output": True, "text": True, "timeout": 10}
+        return subprocess.CompletedProcess(args, code, stdout=output, stderr="ignored")
+
+    monkeypatch.setattr("pytest_gpu_proof.receipt.subprocess.run", run)
+    assert _nvcc_version() == expected
+    monkeypatch.setattr("pytest_gpu_proof.receipt._gpu_info", lambda **kw: None)
+    assert _env_info()["nvcc_version"] == expected
+
+
+@pytest.mark.parametrize("error", [
+    FileNotFoundError(), PermissionError(),
+    __import__("subprocess").TimeoutExpired("nvcc", 10), UnicodeError(),
+])
+def test_nvcc_unavailable(monkeypatch, error):
+    from pytest_gpu_proof.receipt import _nvcc_version
+
+    def run(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr("pytest_gpu_proof.receipt.subprocess.run", run)
+    assert _nvcc_version() is None

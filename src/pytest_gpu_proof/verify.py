@@ -179,7 +179,7 @@ def _parse_time(value, field: str) -> datetime.datetime:
         raise VerificationError(f"{field} is missing or is not a UTC timestamp")
     try:
         return datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=datetime.UTC
+            tzinfo=datetime.timezone.utc
         )
     except ValueError as exc:
         raise VerificationError(f"{field} is not a valid UTC timestamp: {value!r}") from exc
@@ -498,7 +498,7 @@ def _verify(
         raise VerificationError("repository policy requires recorded GPU information")
 
     ended = _parse_time(session.get("ended_at"), "session.ended_at")
-    age = datetime.datetime.now(datetime.UTC) - ended
+    age = datetime.datetime.now(datetime.timezone.utc) - ended
     if age < datetime.timedelta(minutes=-5):
         raise VerificationError("receipt timestamp is in the future")
     if age > datetime.timedelta(days=max_days):
@@ -508,7 +508,7 @@ def _verify(
     committed = get_commit_time(stored_sha, root)
     if committed is not None:
         started = _parse_time(session.get("started_at"), "session.started_at")
-        commit_dt = datetime.datetime.fromtimestamp(committed, datetime.UTC)
+        commit_dt = datetime.datetime.fromtimestamp(committed, datetime.timezone.utc)
         if started < commit_dt - datetime.timedelta(minutes=5):
             raise VerificationError(
                 "receipt session started before its commit existed "
@@ -577,7 +577,7 @@ def _verify_shards(receipt: dict, root: str, policy: dict, max_days: int = 30) -
                 raise VerificationError(
                     f"carried shard {name!r} was recorded with a dirty working tree")
             original = _parse_time(carried.get("original_ended_at"), f"shard {name}.original_ended_at")
-            age = datetime.datetime.now(datetime.UTC) - original
+            age = datetime.datetime.now(datetime.timezone.utc) - original
             # A carried shard's original run is never allowed to be older than
             # the receipt itself may be, unless policy says so explicitly.
             limit = policy.get("carried_max_age_days", min(30, max_days))

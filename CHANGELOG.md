@@ -4,6 +4,16 @@ All notable changes to pytest-gpu-proof are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/) (pre-1.0: minor bumps may break).
 
+## [0.5.0] — 2026-10-28
+
+### Added
+
+- Python 3.10 support with a conditional `tomli` dependency and a CI test lane.
+- Signed `environment.nvcc_version` records the stripped output of
+  `nvcc --version` from PATH, or null when unavailable. Fresh shard merges
+  require matching compiler metadata; existing receipts without the field
+  remain supported.
+
 ## [0.4.1] — 2026-10-12
 
 ### Fixed

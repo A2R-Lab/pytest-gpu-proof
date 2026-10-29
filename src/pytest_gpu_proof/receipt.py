@@ -25,7 +25,7 @@ from .gitutils import (
 
 
 def _utcnow() -> str:
-    return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _gpu_info_from_torch() -> Optional[Dict[str, Any]]:
@@ -92,6 +92,19 @@ def _gpu_info(include_uuid: bool = True) -> Optional[Dict[str, Any]]:
     }
 
 
+def _nvcc_version() -> Optional[str]:
+    """Record the compiler on PATH, independently of GPU availability."""
+    try:
+        result = subprocess.run(
+            ["nvcc", "--version"], capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired, UnicodeError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
 def _env_info(record_gpu_uuid: bool = True) -> Dict[str, Any]:
     import pytest
 
@@ -102,6 +115,7 @@ def _env_info(record_gpu_uuid: bool = True) -> Dict[str, Any]:
         "platform": platform.platform(),
         "pytest_version": pytest.__version__,
         "plugin_version": __version__,
+        "nvcc_version": _nvcc_version(),
         "gpu_info": _gpu_info(include_uuid=record_gpu_uuid),
     }
 
