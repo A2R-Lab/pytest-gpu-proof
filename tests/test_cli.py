@@ -1,4 +1,6 @@
-import runpy
+import subprocess
+from importlib.util import spec_from_file_location
+from pathlib import Path
 import sys
 from types import SimpleNamespace
 
@@ -69,14 +71,31 @@ def test_merge_cli_success_and_error(monkeypatch, capsys):
 def test_module_entrypoint(monkeypatch):
     monkeypatch.setattr("pytest_gpu_proof.cli.main", lambda: (_ for _ in ()).throw(SystemExit(7)))
     with pytest.raises(SystemExit) as exc:
-        runpy.run_module("pytest_gpu_proof.__main__", run_name="__main__")
+        path = Path(cli.__file__).with_name("__main__.py")
+        exec(compile(path.read_text(), str(path), "exec"),
+             {"__name__": "__main__", "__package__": "pytest_gpu_proof",
+              "__file__": str(path),
+              "__spec__": spec_from_file_location(f"pytest_gpu_proof.{path.stem}", path)})
     assert exc.value.code == 7
 
 
-@pytest.mark.filterwarnings("ignore:.*found in sys.modules.*:RuntimeWarning")
 def test_cli_file_entrypoint(monkeypatch):
     monkeypatch.setattr("pytest_gpu_proof.verify.verify_receipt", lambda **kwargs: True)
     monkeypatch.setattr(sys, "argv", ["gpu-proof", "verify", "--receipt", "r.json"])
     with pytest.raises(SystemExit) as exc:
-        runpy.run_module("pytest_gpu_proof.cli", run_name="__main__")
+        path = Path(cli.__file__)
+        exec(compile(path.read_text(), str(path), "exec"),
+             {"__name__": "__main__", "__package__": "pytest_gpu_proof",
+              "__file__": str(path),
+              "__spec__": spec_from_file_location(f"pytest_gpu_proof.{path.stem}", path)})
     assert exc.value.code == 0
+
+
+@pytest.mark.parametrize("module", ["pytest_gpu_proof", "pytest_gpu_proof.cli"])
+def test_module_cli_in_fresh_interpreter(module):
+    # Real -m invocation has no pytest assertion-rewriting loader. The in-process
+    # source-execution tests above retain coverage and mocks for exit/dispatch behavior.
+    result = subprocess.run([sys.executable, "-m", module, "--help"],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert "verify signed GPU test receipts" in result.stdout
