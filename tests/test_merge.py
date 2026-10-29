@@ -30,7 +30,7 @@ def signer_with_key(tmp_path, ed25519_keypair):
 
 
 def _utcstamp(minutes_ago: int = 0) -> str:
-    ts = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=minutes_ago)
+    ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=minutes_ago)
     return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -241,3 +241,24 @@ def test_schema1_merge_has_no_schema3_session_fields():
     merged = merge_payloads([base], ["one.json"])
     assert "outcome" not in merged["session"]
     assert "shards" not in merged
+
+
+@pytest.mark.parametrize("first, second", [("V13.2", "V12.8"), ("V13.2", None)])
+def test_refuses_nvcc_mismatch(tmp_path, tmp_git_repo, signer_with_key, first, second):
+    signer, _, _ = signer_with_key
+    a = _shard(tmp_path, tmp_git_repo, signer, "a.json", [_result("t::a")],
+               mutate=lambda p: p["environment"].__setitem__("nvcc_version", first))
+    b = _shard(tmp_path, tmp_git_repo, signer, "b.json", [_result("t::b")],
+               mutate=lambda p: p["environment"].__setitem__("nvcc_version", second))
+    with pytest.raises(MergeError, match="environment.nvcc_version"):
+        merge_payloads([json.loads(a.read_text()), json.loads(b.read_text())], ["a", "b"])
+
+
+def test_merge_old_receipt_without_nvcc(tmp_path, tmp_git_repo, signer_with_key):
+    signer, _, _ = signer_with_key
+    a = _shard(tmp_path, tmp_git_repo, signer, "a.json", [_result("t::a")],
+               mutate=lambda p: p["environment"].pop("nvcc_version", None))
+    b = _shard(tmp_path, tmp_git_repo, signer, "b.json", [_result("t::b")],
+               mutate=lambda p: p["environment"].__setitem__("nvcc_version", None))
+    merged = merge_payloads([json.loads(a.read_text()), json.loads(b.read_text())], ["a", "b"])
+    assert len(merged["tests"]) == 2

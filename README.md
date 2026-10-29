@@ -52,7 +52,7 @@ cd pytest-gpu-proof
 python -m pip install -e ".[dev]"
 ```
 
-Requirements: Python 3.11+, pytest 7+, and `cryptography` 41+.
+Requirements: Python 3.10+, pytest 7+, and `cryptography` 41+.
 
 ## Quick start
 
@@ -306,7 +306,7 @@ python -m build
 python -m twine check --strict dist/*
 ```
 
-CI tests Python 3.11–3.13 and enforces 100% line and branch coverage. See
+CI tests Python 3.10–3.13 and enforces 100% line and branch coverage. See
 [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
 [RELEASING.md](RELEASING.md).
 

@@ -37,7 +37,7 @@ def signer_with_key(tmp_path, ed25519_keypair):
 
 
 def _utcstamp(days_ago: float = 0) -> str:
-    ts = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days_ago)
+    ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days_ago)
     return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

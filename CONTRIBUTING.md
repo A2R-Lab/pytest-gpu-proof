@@ -19,7 +19,7 @@ python -m build
 python -m twine check --strict dist/*
 ```
 
-CI runs the test suite on Python 3.11, 3.12, and 3.13, independently enforces
+CI runs the test suite on Python 3.10, 3.11, 3.12, and 3.13, independently enforces
 100% line and branch coverage, builds docs strictly, and smoke-tests the wheel.
 
 ## Change expectations

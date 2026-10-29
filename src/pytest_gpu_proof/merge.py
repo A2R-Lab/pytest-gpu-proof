@@ -67,7 +67,7 @@ def merge_payloads(receipts: List[dict], sources: List[str]) -> dict:
                        "repo.commit_sha")
     _require_identical(receipts, sources, lambda r: r.get("fingerprint"), "fingerprint")
     _require_identical(receipts, sources, lambda r: r.get("mode"), "mode")
-    for key in ("python_version", "platform", "pytest_version", "plugin_version"):
+    for key in ("python_version", "platform", "pytest_version", "plugin_version", "nvcc_version"):
         _require_identical(receipts, sources,
                            lambda r, k=key: r.get("environment", {}).get(k),
                            f"environment.{key}")

@@ -36,5 +36,5 @@ or exact SSH key fingerprints.
 - [Architecture](architecture.md): schema and data flow.
 - [Security model](security_model.md): exact guarantees and limits.
 
-Requirements: Python 3.11+, pytest 7+, and an SSH private-key file whose public
+Requirements: Python 3.10+, pytest 7+, and an SSH private-key file whose public
 key is registered on GitHub.

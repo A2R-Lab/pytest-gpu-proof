@@ -38,7 +38,7 @@ def signer_with_key(tmp_path, keypair):
 
 
 def _utcstamp(days_ago: int = 0) -> str:
-    ts = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days_ago)
+    ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days_ago)
     return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -273,7 +273,7 @@ def test_verify_fails_on_failed_test(tmp_path, tmp_git_repo, signer_with_key):
         }
     ]
     import datetime
-    now = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     payload = build_receipt_payload(config, results, now, now)
     receipt = finalize_receipt(payload, signer)
     path = tmp_path / "gpu-proof.json"
@@ -571,7 +571,7 @@ def test_verifier_wrapper_reports_failure(tmp_path, tmp_git_repo, capsys):
 
 def test_future_and_invalid_age_policy(tmp_path, tmp_git_repo, signer_with_key):
     signer, public_key = signer_with_key
-    future = (datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    future = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     path = _make_receipt(tmp_path, tmp_git_repo, signer, ended_at=future)
     with _mock_github_keys(public_key), pytest.raises(VerificationError, match="future"):
         _verify(str(path), None, str(tmp_git_repo), "testuser", None)

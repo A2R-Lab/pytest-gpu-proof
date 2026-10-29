@@ -121,3 +121,23 @@ def test_record_gpu_uuid_from_toml(tmp_path):
         )
     )
     assert config.record_gpu_uuid is False
+
+
+def test_tomli_fallback(monkeypatch, tmp_path):
+    import builtins
+    import runpy
+    import pytest_gpu_proof.config as config
+
+    original_import = builtins.__import__
+
+    def without_tomllib(name, *args, **kwargs):
+        if name == "tomllib":
+            raise ModuleNotFoundError("No module named 'tomllib'")
+        if name == "tomli":
+            return config.tomllib
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_tomllib)
+    namespace = runpy.run_path(config.__file__)
+    (tmp_path / "pyproject.toml").write_text('[tool.gpu_proof]\nmode = "local"\n')
+    assert namespace["load_toml_defaults"](tmp_path) == {"mode": "local"}

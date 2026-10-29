@@ -69,6 +69,15 @@ canonical = json.dumps(
 Putting signer metadata inside this payload prevents identity or algorithm
 substitution after signing.
 
+The optional `environment.nvcc_version` field records the stripped stdout of
+`nvcc --version` resolved through PATH. It is null if the executable is missing,
+cannot run, times out after ten seconds, fails, or returns empty/undecodable output.
+This is self-reported compiler availability, not evidence that this compiler built
+the tested code. It is independent of GPU detection and requires no GPU.
+Existing schema-3 receipts without the field still verify. Fresh shard merges
+require matching values (missing and null are equivalent); carried shards retain
+their original environment metadata.
+
 ## Fingerprint manifest
 
 `sha256-manifest-v2` enumerates stage-0 Git index entries. Regular files bind

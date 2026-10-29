@@ -89,3 +89,16 @@ def tmp_git_repo(tmp_path):
         "*.json\nid_*\nexpected_skips.txt\npyproject.toml\n"
     )
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _no_host_nvcc(monkeypatch):
+    """Compiler metadata tests override this deterministic default explicitly."""
+    run = subprocess.run
+
+    def without_host_nvcc(args, *positional, **kwargs):
+        if args == ["nvcc", "--version"]:
+            return subprocess.CompletedProcess(args, 0, stdout="test nvcc version\n", stderr="")
+        return run(args, *positional, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", without_host_nvcc)
