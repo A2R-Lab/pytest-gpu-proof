@@ -52,7 +52,9 @@ The top-level blocks are:
 - `fingerprint`: manifest algorithm, tracked paths, extra paths, count, digest;
 - `session`: start/end, pass/fail, exact node IDs, pytest arguments;
 - `tests`: terminal outcome, phase, duration, and comparison checks;
-- `environment`: Python, platform, pytest, plugin, and self-reported GPU data;
+- `environment`: Python, platform, pytest, plugin, and self-reported GPU data
+  (from `nvidia-smi`, else PyTorch, else the CUDA driver library through `ctypes`;
+  `gpu_info.source` names which);
 - `shards`: optional narrow manifests and carry metadata;
 - `signer`: signed username, algorithm, backend, and key fingerprint;
 - `signature`: base64 signature value only.

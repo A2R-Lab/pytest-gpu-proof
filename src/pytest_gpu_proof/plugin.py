@@ -30,10 +30,12 @@ def _has_gpu() -> bool:
         pass
     try:
         import torch
-        return torch.cuda.is_available()
+        if torch.cuda.is_available():
+            return True
     except ImportError:
         pass
-    return False
+    from .receipt import _gpu_info_from_libcuda
+    return _gpu_info_from_libcuda(include_uuid=False) is not None
 
 
 class GpuProofPlugin:

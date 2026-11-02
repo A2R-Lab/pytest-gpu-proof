@@ -110,6 +110,8 @@ def test_gpu_capture_unavailable(monkeypatch, behavior):
     monkeypatch.setattr(
         "pytest_gpu_proof.receipt.subprocess.run", lambda *a, **k: behavior()
     )
+    monkeypatch.setattr("pytest_gpu_proof.receipt._gpu_info_from_libcuda",
+                        lambda include_uuid=True: None)
     assert _gpu_info() is None
 
 
@@ -313,6 +315,7 @@ def test_gpu_info_falls_back_to_torch_when_nvidia_smi_is_absent(monkeypatch):
     def no_smi(*args, **kwargs):
         raise FileNotFoundError("nvidia-smi")
     monkeypatch.setattr(receipt_mod.subprocess, "run", no_smi)
+    monkeypatch.setattr(receipt_mod, "_gpu_info_from_libcuda", lambda include_uuid=True: None)
     props = types.SimpleNamespace(name="Fake GPU", total_memory=8 * 1024 ** 3, major=12, minor=0)
     fake_cuda = types.SimpleNamespace(is_available=lambda: True, device_count=lambda: 1,
                                       get_device_properties=lambda i: props)
@@ -338,6 +341,87 @@ def test_gpu_info_falls_back_to_torch_on_nvidia_smi_failure(monkeypatch):
     monkeypatch.setattr(receipt_mod.subprocess, "run",
                         lambda *a, **k: types.SimpleNamespace(returncode=1, stdout=""))
     monkeypatch.setitem(sys.modules, "torch", None)
+    monkeypatch.setattr(receipt_mod, "_gpu_info_from_libcuda", lambda include_uuid=True: None)
+    assert receipt_mod._gpu_info() is None
+
+
+class _FakeLibcuda:
+    """Stand-in for ctypes.CDLL('libcuda.so.1'): every entry point writes the
+    canned answer into its ctypes out-argument and returns CUDA_SUCCESS, except
+    `fail`, which returns a nonzero CUresult, and `missing`, which is absent."""
+
+    def __init__(self, count=1, fail=None, missing=None):
+        self.count, self.fail, self.missing = count, fail, missing
+
+    def __getattr__(self, name):
+        if name == self.missing:
+            raise AttributeError(name)
+
+        def entry(*args):
+            if name == self.fail:
+                return 999
+            if name == "cuDeviceGetCount":
+                args[0]._obj.value = self.count
+            elif name == "cuDriverGetVersion":
+                args[0]._obj.value = 13020
+            elif name == "cuDeviceGet":
+                args[0]._obj.value = args[1]
+            elif name == "cuDeviceGetName":
+                args[0].value = b"Fake Orin"
+            elif name == "cuDeviceGetAttribute":
+                args[0]._obj.value = {75: 8, 76: 7}[args[1]]
+            elif name == "cuDeviceTotalMem_v2":
+                args[0]._obj.value = 62878 * 1024 * 1024
+            elif name == "cuDeviceGetUuid":
+                args[0].raw = bytes(range(16))
+            return 0
+        return entry
+
+
+def _no_smi_no_torch(monkeypatch, receipt_mod):
+    import sys
+
+    def no_smi(*args, **kwargs):
+        raise FileNotFoundError("nvidia-smi")
+    monkeypatch.setattr(receipt_mod.subprocess, "run", no_smi)
+    monkeypatch.setitem(sys.modules, "torch", None)
+
+
+def test_gpu_info_falls_back_to_libcuda(monkeypatch):
+    """2026-11-02: a Jetson before JetPack 7 has no nvidia-smi and a plain venv
+    has no torch; the CUDA driver library still identifies the device."""
+    from pytest_gpu_proof import receipt as receipt_mod
+    _no_smi_no_torch(monkeypatch, receipt_mod)
+    monkeypatch.setattr(receipt_mod.ctypes, "CDLL", lambda name: _FakeLibcuda(count=2))
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+    info = receipt_mod._gpu_info()
+    assert info["source"] == "libcuda"
+    assert info["cuda_visible_devices"] == "0"
+    assert info["devices"][0] == {
+        "index": "0", "uuid": "GPU-00010203-0405-0607-0809-0a0b0c0d0e0f", "name": "Fake Orin",
+        "driver_version": "13.2", "memory": "62878 MiB", "compute_capability": "8.7"}
+    assert info["devices"][1]["index"] == "1"
+    anonymous = receipt_mod._gpu_info(include_uuid=False)
+    assert [d["uuid"] for d in anonymous["devices"]] == [None, None]
+    assert anonymous["devices"][0]["name"] == "Fake Orin"
+
+
+@pytest.mark.parametrize("fake", [
+    None,                                    # libcuda.so.1 not loadable
+    _FakeLibcuda(fail="cuInit"),             # a driver call fails
+    _FakeLibcuda(fail="cuDeviceGetUuid"),    # a per-device call fails
+    _FakeLibcuda(missing="cuDeviceGetName"),  # symbol absent from the library
+    _FakeLibcuda(count=0),                   # driver loads, no device
+])
+def test_gpu_info_libcuda_fallback_fails_closed(monkeypatch, fake):
+    from pytest_gpu_proof import receipt as receipt_mod
+    _no_smi_no_torch(monkeypatch, receipt_mod)
+
+    def load(name):
+        if fake is None:
+            raise OSError(f"{name}: cannot open shared object file")
+        return fake
+    monkeypatch.setattr(receipt_mod.ctypes, "CDLL", load)
     assert receipt_mod._gpu_info() is None
 
 
