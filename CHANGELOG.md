@@ -4,6 +4,18 @@ All notable changes to pytest-gpu-proof are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/) (pre-1.0: minor bumps may break).
 
+## [Unreleased]
+
+### Added
+
+- Python 3.9 support (the oldest Python on a JetPack 5 Jetson), with a CI test
+  lane. The code already avoided 3.10-only syntax; only the floor moved.
+- `environment.gpu_info` and the `gpu_required` probe fall back to the CUDA
+  driver library (`libcuda` through `ctypes`) when neither `nvidia-smi` nor
+  PyTorch is available, as on Jetson boards before JetPack 7. The record names
+  its source (`nvidia-smi`, `torch`, or `libcuda`) and stays self-reported
+  metadata, not evidence of execution.
+
 ## [0.5.0] — 2026-10-28
 
 ### Added

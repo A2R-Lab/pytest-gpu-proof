@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import ctypes
 import datetime
 import json
 import os
@@ -10,6 +11,7 @@ import platform
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -56,6 +58,67 @@ def _gpu_info_from_torch() -> Optional[Dict[str, Any]]:
             "source": "torch"}
 
 
+_CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR = 75
+_CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR = 76
+
+
+def _gpu_info_from_libcuda(include_uuid: bool = True) -> Optional[Dict[str, Any]]:
+    """nvidia-smi-free, torch-free fallback through the CUDA driver API: ctypes
+    on libcuda. Jetson boards before JetPack 7 ship no nvidia-smi, and a plain
+    pytest venv there has no torch, so without this a Jetson receipt records
+    `gpu_info: null` and fails `require_gpu` for the wrong reason. Still
+    self-reported metadata, like the other two sources."""
+    try:
+        cuda = ctypes.CDLL("libcuda.so.1")
+    except OSError:
+        return None
+
+    def call(name: str, *args: Any) -> None:
+        rc = getattr(cuda, name)(*args)
+        if rc != 0:
+            raise OSError(f"{name} returned CUresult {rc}")
+
+    try:
+        call("cuInit", 0)
+        count = ctypes.c_int()
+        call("cuDeviceGetCount", ctypes.byref(count))
+        driver = ctypes.c_int()
+        call("cuDriverGetVersion", ctypes.byref(driver))
+        driver_version = f"{driver.value // 1000}.{(driver.value % 1000) // 10}"
+        devices = []
+        for index in range(count.value):
+            device = ctypes.c_int()
+            call("cuDeviceGet", ctypes.byref(device), index)
+            name = ctypes.create_string_buffer(256)
+            call("cuDeviceGetName", name, 256, device)
+            major, minor = ctypes.c_int(), ctypes.c_int()
+            call("cuDeviceGetAttribute", ctypes.byref(major),
+                 _CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device)
+            call("cuDeviceGetAttribute", ctypes.byref(minor),
+                 _CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device)
+            total = ctypes.c_size_t()
+            call("cuDeviceTotalMem_v2", ctypes.byref(total), device)
+            device_uuid = None
+            if include_uuid:
+                raw = ctypes.create_string_buffer(16)
+                call("cuDeviceGetUuid", raw, device)
+                device_uuid = f"GPU-{uuid.UUID(bytes=raw.raw)}"
+            devices.append({
+                "index": str(index),
+                "uuid": device_uuid,
+                "name": name.value.decode("utf-8", "replace"),
+                "driver_version": driver_version,
+                "memory": f"{total.value // (1024 * 1024)} MiB",
+                "compute_capability": f"{major.value}.{minor.value}",
+            })
+    except (AttributeError, OSError):  # missing symbol, failed driver call
+        return None
+    if not devices:
+        return None
+    return {"devices": devices, "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+            "source": "libcuda"}
+
+
 def _gpu_info(include_uuid: bool = True) -> Optional[Dict[str, Any]]:
     try:
         result = subprocess.run(
@@ -69,9 +132,9 @@ def _gpu_info(include_uuid: bool = True) -> Optional[Dict[str, Any]]:
             timeout=10,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        return _gpu_info_from_torch()
+        return _gpu_info_from_torch() or _gpu_info_from_libcuda(include_uuid)
     if result.returncode != 0 or not result.stdout.strip():
-        return _gpu_info_from_torch()
+        return _gpu_info_from_torch() or _gpu_info_from_libcuda(include_uuid)
     devices = []
     for line in result.stdout.splitlines():
         parts = [part.strip() for part in line.split(",")]

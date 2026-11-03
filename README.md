@@ -116,7 +116,7 @@ a map that shard bin-packers can calibrate from.
 |---|---|
 | `@pytest.mark.gpu_proof` | Include the test in the receipt |
 | `@pytest.mark.gpu_equivalence` | Alias for `gpu_proof` |
-| `@pytest.mark.gpu_required` | Skip when neither `nvidia-smi` nor PyTorch reports a GPU |
+| `@pytest.mark.gpu_required` | Skip when none of `nvidia-smi`, PyTorch, or the CUDA driver library (`libcuda` through `ctypes`) reports a GPU |
 
 Skipped tests are recorded. Verification rejects them by default. Prefer an
 exact `--expected-skips` baseline over the broad `--allow-skipped` escape

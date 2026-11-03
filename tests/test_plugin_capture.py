@@ -455,6 +455,31 @@ def test_has_gpu_fallbacks(monkeypatch):
             raise ImportError
         return real_import(name, *args, **kwargs)
     monkeypatch.setattr(builtins, "__import__", no_torch)
+    monkeypatch.setattr("pytest_gpu_proof.receipt._gpu_info_from_libcuda",
+                        lambda include_uuid=True: None)
+    assert plugin_module._has_gpu() is False
+
+
+def test_has_gpu_falls_back_to_libcuda(monkeypatch):
+    """2026-11-02: the marker probe and the receipt share the libcuda fallback,
+    so a Jetson without nvidia-smi or torch neither skips gpu_required tests
+    nor records gpu_info: null."""
+    import subprocess
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess([], 1))
+    monkeypatch.setitem(__import__("sys").modules, "torch",
+                        SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False)))
+    seen = []
+
+    def probe(include_uuid=True):
+        seen.append(include_uuid)
+        return {"devices": [{"index": "0"}], "cuda_visible_devices": None, "source": "libcuda"}
+    monkeypatch.setattr("pytest_gpu_proof.receipt._gpu_info_from_libcuda", probe)
+    assert plugin_module._has_gpu() is True
+    assert seen == [False]
+    monkeypatch.setattr("pytest_gpu_proof.receipt._gpu_info_from_libcuda",
+                        lambda include_uuid=True: None)
     assert plugin_module._has_gpu() is False
 
 
@@ -517,6 +542,8 @@ def test_has_gpu_handles_nvidia_error(monkeypatch):
             raise ImportError
         return real_import(name, *args, **kwargs)
     monkeypatch.setattr(builtins, "__import__", no_torch)
+    monkeypatch.setattr("pytest_gpu_proof.receipt._gpu_info_from_libcuda",
+                        lambda include_uuid=True: None)
     assert plugin_module._has_gpu() is False
 
 
