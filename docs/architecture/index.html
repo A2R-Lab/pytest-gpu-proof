@@ -791,7 +791,9 @@ best-effort mode was requested.</p>
 <li><code>fingerprint</code>: manifest algorithm, tracked paths, extra paths, count, digest;</li>
 <li><code>session</code>: start/end, pass/fail, exact node IDs, pytest arguments;</li>
 <li><code>tests</code>: terminal outcome, phase, duration, and comparison checks;</li>
-<li><code>environment</code>: Python, platform, pytest, plugin, and self-reported GPU data;</li>
+<li><code>environment</code>: Python, platform, pytest, plugin, and self-reported GPU data
+  (from <code>nvidia-smi</code>, else PyTorch, else the CUDA driver library through <code>ctypes</code>;
+  <code>gpu_info.source</code> names which);</li>
 <li><code>shards</code>: optional narrow manifests and carry metadata;</li>
 <li><code>signer</code>: signed username, algorithm, backend, and key fingerprint;</li>
 <li><code>signature</code>: base64 signature value only.</li>
